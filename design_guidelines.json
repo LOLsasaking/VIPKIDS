@@ -1,0 +1,204 @@
+{
+  "theme": "dark",
+  "archetype": "5 (Jewel & Luxury)",
+  "brand_identity": {
+    "name": "VIP KIDS TRANSPORTATION",
+    "description": "Premium mobile application for a private school chauffeur company based in Hollywood, Florida, providing luxury school transportation for children using only sedans and SUVs.",
+    "emotional_tone": "Premium, safe, minimal, elegant, professional, and trusted.",
+    "anti_patterns": [
+      "No rideshare aesthetics (Uber/Lyft clones)",
+      "No cartoon UI, overly playful design, or childish motifs",
+      "No bright neons or generic primary tech blue",
+      "No school buses or vans in imagery"
+    ]
+  },
+  "typography": {
+    "primary_font": "Playfair Display",
+    "secondary_font": "Outfit",
+    "font_loading_instructions": "Use @expo-google-fonts/playfair-display and @expo-google-fonts/outfit.",
+    "scales": {
+      "h1": { "fontSize": 36, "fontFamily": "PlayfairDisplay_600SemiBold", "lineHeight": 44, "letterSpacing": 0.5 },
+      "h2": { "fontSize": 28, "fontFamily": "PlayfairDisplay_600SemiBold", "lineHeight": 36, "letterSpacing": 0.5 },
+      "h3": { "fontSize": 22, "fontFamily": "PlayfairDisplay_500Medium", "lineHeight": 30, "letterSpacing": 0.25 },
+      "body_large": { "fontSize": 18, "fontFamily": "Outfit_400Regular", "lineHeight": 26 },
+      "body": { "fontSize": 16, "fontFamily": "Outfit_400Regular", "lineHeight": 24 },
+      "body_small": { "fontSize": 14, "fontFamily": "Outfit_400Regular", "lineHeight": 20 },
+      "caption": { "fontSize": 12, "fontFamily": "Outfit_500Medium", "lineHeight": 16, "letterSpacing": 0.5, "textTransform": "uppercase" }
+    }
+  },
+  "colors": {
+    "background": {
+      "primary": "#09090B",
+      "secondary": "#18181B",
+      "tertiary": "#27272A",
+      "elevated": "#1C1C22"
+    },
+    "text": {
+      "primary": "#FAFAFA",
+      "secondary": "#A19C93",
+      "muted": "#71717A",
+      "inverse": "#09090B"
+    },
+    "brand": {
+      "primary": "#D4AF37",
+      "primary_muted": "#B5952F",
+      "accent": "#E5E4E2",
+      "danger": "#EF4444",
+      "success": "#10B981"
+    },
+    "border": {
+      "default": "#27272A",
+      "focus": "#D4AF37",
+      "light": "#3F3F46"
+    }
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 32,
+    "xxl": 48,
+    "xxxl": 64,
+    "safe_area_padding": "Use SafeAreaView from react-native-safe-area-context"
+  },
+  "components": {
+    "buttons": {
+      "primary": {
+        "backgroundColor": "#D4AF37",
+        "borderRadius": 8,
+        "paddingVertical": 16,
+        "paddingHorizontal": 24,
+        "alignItems": "center",
+        "justifyContent": "center"
+      },
+      "secondary": {
+        "backgroundColor": "transparent",
+        "borderWidth": 1,
+        "borderColor": "#3F3F46",
+        "borderRadius": 8,
+        "paddingVertical": 16,
+        "paddingHorizontal": 24,
+        "alignItems": "center",
+        "justifyContent": "center"
+      },
+      "text_style_primary": {
+        "color": "#09090B",
+        "fontFamily": "Outfit_600SemiBold",
+        "fontSize": 16,
+        "textTransform": "uppercase",
+        "letterSpacing": 1
+      },
+      "text_style_secondary": {
+        "color": "#FAFAFA",
+        "fontFamily": "Outfit_500Medium",
+        "fontSize": 16
+      }
+    },
+    "cards": {
+      "container": {
+        "backgroundColor": "#18181B",
+        "borderRadius": 16,
+        "padding": 20,
+        "borderWidth": 1,
+        "borderColor": "#27272A",
+        "shadowColor": "#000",
+        "shadowOffset": { "width": 0, "height": 8 },
+        "shadowOpacity": 0.4,
+        "shadowRadius": 16,
+        "elevation": 5
+      }
+    },
+    "inputs": {
+      "container": {
+        "backgroundColor": "#09090B",
+        "borderWidth": 1,
+        "borderColor": "#3F3F46",
+        "borderRadius": 8,
+        "padding": 16,
+        "color": "#FAFAFA",
+        "fontFamily": "Outfit_400Regular",
+        "fontSize": 16
+      }
+    },
+    "bottom_tab_bar": {
+      "backgroundColor": "#18181B",
+      "borderTopWidth": 1,
+      "borderTopColor": "#27272A",
+      "activeTintColor": "#D4AF37",
+      "inactiveTintColor": "#71717A",
+      "paddingBottom": "SafeArea bottom inset"
+    }
+  },
+  "icons": {
+    "library": "lucide-react-native",
+    "strokeWidth": 1.5,
+    "size": {
+      "sm": 16,
+      "md": 24,
+      "lg": 32
+    }
+  },
+  "media": {
+    "chauffeur_door_child": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/7a0535f8-9d71-4d55-aadd-ad0af3e446d6/images/646960d9c7d4ff36097545b171ade82d7e516926fe705a545b9d3c7eadc343e5.png",
+      "description": "Professional chauffeur holding door for child, warm lighting, premium."
+    },
+    "luxury_car_interior": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/7a0535f8-9d71-4d55-aadd-ad0af3e446d6/images/acdea1ead4539d0d4d9e553c000cd0afafd5ccf9ae474845c4c8e20c9f28f6e1.png",
+      "description": "Pristine luxury car interior view from back seat, safe and high-end."
+    },
+    "luxury_sedan_dusk": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/7a0535f8-9d71-4d55-aadd-ad0af3e446d6/images/c911da8db961e3b314dda780739fc72165787128a21e141819fe82f66b72883d.png",
+      "description": "Sleek black luxury sedan parked at dusk, cinematic."
+    },
+    "driver_portrait_1": {
+      "url": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkcml2ZXIlMjBzdWl0JTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc4OTU4NTI2fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Professional driver portrait in suit."
+    },
+    "suv_exterior": {
+      "url": "https://images.unsplash.com/photo-1599758918450-c0d699978e59?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxsdXh1cnklMjBibGFjayUyMHN1diUyMGNoYXVmZmV1cnxlbnwwfHx8fDE3Nzg5NTg1MjZ8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Black SUV parked."
+    }
+  },
+  "screens": {
+    "login_onboarding": {
+      "layout": "Full screen background image (luxury_sedan_dusk) with heavy dark gradient overlay (black to transparent to black). Role selection buttons (Parent / Driver / Admin) placed at the bottom safe area.",
+      "features": ["Role selection", "Phone/OTP or Email/Password login", "Elegant typography introduction"]
+    },
+    "parent_dashboard": {
+      "layout": "Bottom Tab Nav (Home, Map, Chat, Schedule, Profile). Home screen features a 'Today's Trip' card at the top, followed by child details and assigned driver card.",
+      "features": [
+        "Child Name & Photo",
+        "Driver Name & Photo (driver_portrait_1)",
+        "Vehicle Info (Black Cadillac Escalade)",
+        "ETA and Live Status",
+        "Quick Action: Mute Notifications Toggle"
+      ]
+    },
+    "driver_dashboard": {
+      "layout": "Bottom Tab Nav (Route, Kids, Chat, Profile). Route screen acts as a command center with a dark map style.",
+      "features": [
+        "Today's Assigned Kids list",
+        "Check-in / Check-out swipe buttons (to avoid accidental taps)",
+        "Delay Alert quick button",
+        "Next pickup highlighted prominently"
+      ]
+    },
+    "admin_dashboard": {
+      "layout": "Top Tab Nav or stacked sections (Overview, Routes, Users). Designed for iPad/Tablet or dense mobile view.",
+      "features": [
+        "Live Map of all active routes",
+        "Broadcast announcements button (floating action button or header icon)",
+        "Driver & Family management lists"
+      ]
+    }
+  },
+  "technical_requirements": {
+    "file_extension": ".js",
+    "styling": "React Native StyleSheet with organized design tokens.",
+    "testing": "All interactive elements must have data-testid in kebab-case (e.g., data-testid='login-submit-button').",
+    "safe_area": "Use react-native-safe-area-context for all top and bottom paddings.",
+    "keyboard_avoiding": "Use KeyboardAvoidingView with behavior='padding' for iOS and 'height' for Android."
+  }
+}
