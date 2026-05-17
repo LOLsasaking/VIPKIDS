@@ -4,37 +4,44 @@ import {
   Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trash2, Check, X, Plus, Link2, UserCheck, Camera, PauseCircle, PlayCircle } from 'lucide-react-native';
+import { Trash2, Check, X, Plus, Link2, UserCheck, Camera, PauseCircle, PlayCircle, Edit3, Car, MapPinned } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import { pickPhoto } from '@/src/photoPicker';
 import { C, S, T, Fonts } from '@/src/theme';
 
-type Tab = 'pending' | 'children' | 'parents' | 'drivers';
+type Tab = 'pending' | 'children' | 'parents' | 'drivers' | 'vehicles' | 'routes';
 
 export default function AdminUsers() {
   const [tab, setTab] = useState<Tab>('pending');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
+  const [editChild, setEditChild] = useState<any | null>(null);
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [editVehicle, setEditVehicle] = useState<any | null>(null);
+  const [showAddRoute, setShowAddRoute] = useState(false);
+  const [editRoute, setEditRoute] = useState<any | null>(null);
   const [assignFor, setAssignFor] = useState<any | null>(null);
   const [parents, setParents] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
   const [vehicles, setVehicles] = useState<any[]>([]);
+  const [allChildren, setAllChildren] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       if (tab === 'children') setData(await Api.adminChildren());
       else if (tab === 'pending') setData(await Api.adminPending());
+      else if (tab === 'vehicles') setData(await Api.adminVehicles());
+      else if (tab === 'routes') setData(await Api.adminListRoutes());
       else setData(await Api.adminUsers(tab === 'parents' ? 'parent' : 'driver'));
     } finally { setLoading(false); }
   }, [tab]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    // Preload assignment options
-    Promise.all([Api.adminUsers('parent'), Api.adminUsers('driver'), Api.adminVehicles()])
-      .then(([p, d, v]) => { setParents(p); setDrivers(d); setVehicles(v); }).catch(() => {});
+    Promise.all([Api.adminUsers('parent'), Api.adminUsers('driver'), Api.adminVehicles(), Api.adminChildren()])
+      .then(([p, d, v, c]) => { setParents(p); setDrivers(d); setVehicles(v); setAllChildren(c); }).catch(() => {});
   }, []);
 
   const remove = (id: string, label: string) => {
@@ -42,6 +49,8 @@ export default function AdminUsers() {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Remove', style: 'destructive', onPress: async () => {
         if (tab === 'children') await Api.adminDeleteChild(id);
+        else if (tab === 'vehicles') await Api.adminDeleteVehicle(id);
+        else if (tab === 'routes') await Api.adminDeleteRoute(id);
         else await Api.adminDeleteUser(id);
         load();
       }},
@@ -97,9 +106,21 @@ export default function AdminUsers() {
               <Text style={styles.addBtnText}>ADD CHILD</Text>
             </TouchableOpacity>
           )}
+          {tab === 'vehicles' && (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddVehicle(true)} testID="add-vehicle-btn">
+              <Plus size={16} color={C.bg} />
+              <Text style={styles.addBtnText}>ADD VEHICLE</Text>
+            </TouchableOpacity>
+          )}
+          {tab === 'routes' && (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddRoute(true)} testID="add-route-btn">
+              <Plus size={16} color={C.bg} />
+              <Text style={styles.addBtnText}>ADD ROUTE</Text>
+            </TouchableOpacity>
+          )}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: S.sm }}>
-          {(['pending', 'children', 'parents', 'drivers'] as Tab[]).map((t) => (
+          {(['pending', 'children', 'parents', 'drivers', 'vehicles', 'routes'] as Tab[]).map((t) => (
             <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]} testID={`admin-tab-${t}`}>
               <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t.toUpperCase()}</Text>
             </TouchableOpacity>
@@ -109,7 +130,49 @@ export default function AdminUsers() {
 
       {loading ? <ActivityIndicator color={C.gold} /> : (
         <ScrollView contentContainerStyle={{ padding: S.md, paddingBottom: S.xxxl }}>
-          {data.map((u: any) => (
+          {tab === 'vehicles' && data.map((v: any) => (
+            <View key={v.id} style={styles.row}>
+              {v.photo_url ? <Image source={{ uri: v.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary, alignItems: 'center', justifyContent: 'center' }]}><Car size={20} color={C.gold} /></View>}
+              <View style={{ flex: 1, marginLeft: S.sm }}>
+                <Text style={styles.name}>{v.year ? `${v.year} ` : ''}{v.make} {v.model}</Text>
+                <Text style={styles.sub}>{v.plate} · {v.color}</Text>
+                {(v.registration_expiry || v.insurance_expiry || v.inspection_expiry) && (
+                  <Text style={[styles.sub, { color: C.gold }]}>
+                    {v.registration_expiry ? `REG ${v.registration_expiry}` : ''}
+                    {v.insurance_expiry ? ` · INS ${v.insurance_expiry}` : ''}
+                    {v.inspection_expiry ? ` · INSP ${v.inspection_expiry}` : ''}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setEditVehicle(v)} testID={`edit-vehicle-${v.id}`} style={{ padding: 8 }}>
+                <Edit3 size={14} color={C.gold} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => remove(v.id, `${v.make} ${v.model}`)} testID={`delete-vehicle-${v.id}`} style={{ padding: 8 }}>
+                <Trash2 size={14} color={C.danger} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {tab === 'routes' && data.map((r: any) => (
+            <View key={r.id} style={styles.row}>
+              <View style={[styles.av, { backgroundColor: C.bgTertiary, alignItems: 'center', justifyContent: 'center' }]}><MapPinned size={20} color={C.gold} /></View>
+              <View style={{ flex: 1, marginLeft: S.sm }}>
+                <Text style={styles.name}>{r.name}</Text>
+                <Text style={styles.sub}>
+                  {r.school || 'No school'} · {r.driver?.name || 'No driver'} · {r.children?.length || 0} kids
+                </Text>
+                {r.notes ? <Text style={[styles.sub, { fontStyle: 'italic' }]}>{r.notes}</Text> : null}
+              </View>
+              <TouchableOpacity onPress={() => setEditRoute(r)} testID={`edit-route-${r.id}`} style={{ padding: 8 }}>
+                <Edit3 size={14} color={C.gold} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => remove(r.id, r.name)} testID={`delete-route-${r.id}`} style={{ padding: 8 }}>
+                <Trash2 size={14} color={C.danger} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {(tab !== 'vehicles' && tab !== 'routes') && data.map((u: any) => (
             <View key={u.id} style={styles.row}>
               {tab === 'children' ? (
                 <TouchableOpacity onPress={() => changeChildPhoto(u.id)} testID={`change-photo-child-${u.id}`}>
@@ -149,6 +212,9 @@ export default function AdminUsers() {
 
               {tab === 'children' && (
                 <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity onPress={() => setEditChild(u)} style={styles.assignBtn} testID={`edit-child-${u.id}`}>
+                    <Edit3 size={14} color={C.gold} />
+                  </TouchableOpacity>
                   <TouchableOpacity onPress={() => setAssignFor(u)} style={styles.assignBtn} testID={`assign-${u.id}`}>
                     <Link2 size={14} color={C.gold} />
                   </TouchableOpacity>
@@ -183,8 +249,10 @@ export default function AdminUsers() {
         </ScrollView>
       )}
 
-      <AddChildModal visible={showAddChild} onClose={() => setShowAddChild(false)} parents={parents} onCreated={load} />
+      <AddChildModal visible={showAddChild || !!editChild} initial={editChild} onClose={() => { setShowAddChild(false); setEditChild(null); }} parents={parents} onCreated={load} />
       <AssignModal child={assignFor} onClose={() => setAssignFor(null)} drivers={drivers} vehicles={vehicles} onAssigned={load} />
+      <VehicleModal visible={showAddVehicle || !!editVehicle} initial={editVehicle} onClose={() => { setShowAddVehicle(false); setEditVehicle(null); }} onSaved={load} />
+      <RouteModal visible={showAddRoute || !!editRoute} initial={editRoute} onClose={() => { setShowAddRoute(false); setEditRoute(null); }} drivers={drivers} vehicles={vehicles} children={allChildren} onSaved={load} />
     </SafeAreaView>
   );
 }
@@ -232,7 +300,7 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
       <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.modalCard}>
           <View style={styles.modalHead}>
-            <Text style={[T.h3, { fontSize: 20 }]}>Add Child</Text>
+            <Text style={[T.h3, { fontSize: 20 }]}>{isEdit ? 'Edit Child' : 'Add Child'}</Text>
             <TouchableOpacity onPress={onClose} testID="add-child-close"><X size={20} color={C.textMuted} /></TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
@@ -294,8 +362,11 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
             <Text style={styles.lab}>EMERGENCY CONTACT PHONE</Text>
             <TextInput style={styles.inp} value={emergencyPhone} onChangeText={setEmergencyPhone} keyboardType="phone-pad" placeholderTextColor={C.textMuted} />
 
+            <Text style={styles.lab}>CHILD CONTACT PHONE (OPTIONAL)</Text>
+            <TextInput style={styles.inp} value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" placeholderTextColor={C.textMuted} />
+
             <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="add-child-submit">
-              {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>CREATE CHILD</Text>}
+              {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>{isEdit ? 'SAVE CHANGES' : 'CREATE CHILD'}</Text>}
             </TouchableOpacity>
           </ScrollView>
         </View>
@@ -348,6 +419,192 @@ function AssignModal({ child, onClose, drivers, vehicles, onAssigned }: any) {
           </ScrollView>
         </View>
       </View>
+    </Modal>
+  );
+}
+
+function VehicleModal({ visible, initial, onClose, onSaved }: any) {
+  const isEdit = !!initial;
+  const [make, setMake] = useState('');
+  const [model, setModel] = useState('');
+  const [plate, setPlate] = useState('');
+  const [color, setColor] = useState('');
+  const [year, setYear] = useState('');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [reg, setReg] = useState('');
+  const [ins, setIns] = useState('');
+  const [insp, setInsp] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (initial) {
+      setMake(initial.make || ''); setModel(initial.model || ''); setPlate(initial.plate || '');
+      setColor(initial.color || ''); setYear(initial.year ? String(initial.year) : '');
+      setPhoto(initial.photo_url || null);
+      setReg(initial.registration_expiry || ''); setIns(initial.insurance_expiry || '');
+      setInsp(initial.inspection_expiry || '');
+    } else if (visible) {
+      setMake(''); setModel(''); setPlate(''); setColor(''); setYear(''); setPhoto(null);
+      setReg(''); setIns(''); setInsp('');
+    }
+  }, [initial, visible]);
+
+  const pick = async () => { const p = await pickPhoto(); if (p) setPhoto(p); };
+
+  const submit = async () => {
+    if (!make || !model || !plate) return Alert.alert('Missing', 'Make, model and plate are required.');
+    setBusy(true);
+    try {
+      const payload = {
+        make, model, plate, color: color || '—',
+        year: year ? parseInt(year) : undefined,
+        photo_url: photo || undefined,
+        registration_expiry: reg || undefined,
+        insurance_expiry: ins || undefined,
+        inspection_expiry: insp || undefined,
+      };
+      if (isEdit) await Api.adminUpdateVehicle(initial.id, payload);
+      else await Api.adminCreateVehicle(payload);
+      onClose(); onSaved();
+    } catch (e: any) { Alert.alert('Error', e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHead}>
+            <Text style={[T.h3, { fontSize: 20 }]}>{isEdit ? 'Edit Vehicle' : 'Add Vehicle'}</Text>
+            <TouchableOpacity onPress={onClose}><X size={20} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
+            <TouchableOpacity onPress={pick} style={styles.photoSlot} testID="vehicle-photo">
+              {photo ? <Image source={{ uri: photo }} style={styles.photoSlotImg} /> : <Car size={26} color={C.gold} />}
+              <Text style={styles.photoSlotText}>{photo ? 'CHANGE PHOTO' : 'ADD VEHICLE PHOTO'}</Text>
+            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>YEAR</Text>
+                <TextInput style={styles.inp} value={year} onChangeText={setYear} keyboardType="numeric" placeholder="2024" placeholderTextColor={C.textMuted} testID="vehicle-year" />
+              </View>
+              <View style={{ flex: 2 }}>
+                <Text style={styles.lab}>MAKE</Text>
+                <TextInput style={styles.inp} value={make} onChangeText={setMake} placeholder="Mercedes-Benz" placeholderTextColor={C.textMuted} testID="vehicle-make" />
+              </View>
+            </View>
+            <Text style={styles.lab}>MODEL</Text>
+            <TextInput style={styles.inp} value={model} onChangeText={setModel} placeholder="S-Class" placeholderTextColor={C.textMuted} testID="vehicle-model" />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>PLATE</Text>
+                <TextInput style={styles.inp} value={plate} onChangeText={setPlate} autoCapitalize="characters" placeholderTextColor={C.textMuted} testID="vehicle-plate" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>COLOR</Text>
+                <TextInput style={styles.inp} value={color} onChangeText={setColor} placeholderTextColor={C.textMuted} />
+              </View>
+            </View>
+            <Text style={styles.lab}>REGISTRATION EXPIRY (YYYY-MM-DD)</Text>
+            <TextInput style={styles.inp} value={reg} onChangeText={setReg} placeholder="2026-12-31" placeholderTextColor={C.textMuted} />
+            <Text style={styles.lab}>INSURANCE EXPIRY</Text>
+            <TextInput style={styles.inp} value={ins} onChangeText={setIns} placeholder="2026-12-31" placeholderTextColor={C.textMuted} />
+            <Text style={styles.lab}>INSPECTION EXPIRY</Text>
+            <TextInput style={styles.inp} value={insp} onChangeText={setInsp} placeholder="2026-12-31" placeholderTextColor={C.textMuted} />
+            <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="vehicle-submit">
+              {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>{isEdit ? 'SAVE VEHICLE' : 'CREATE VEHICLE'}</Text>}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function RouteModal({ visible, initial, onClose, drivers, vehicles, children: kids, onSaved }: any) {
+  const isEdit = !!initial;
+  const [name, setName] = useState('');
+  const [school, setSchool] = useState('');
+  const [driverId, setDriverId] = useState('');
+  const [vehicleId, setVehicleId] = useState('');
+  const [childIds, setChildIds] = useState<string[]>([]);
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (initial) {
+      setName(initial.name || ''); setSchool(initial.school || '');
+      setDriverId(initial.driver_id || ''); setVehicleId(initial.vehicle_id || '');
+      setChildIds(initial.child_ids || []); setNotes(initial.notes || '');
+    } else if (visible) {
+      setName(''); setSchool(''); setDriverId(''); setVehicleId(''); setChildIds([]); setNotes('');
+    }
+  }, [initial, visible]);
+
+  const toggleChild = (cid: string) => {
+    setChildIds((prev) => prev.includes(cid) ? prev.filter((c) => c !== cid) : [...prev, cid]);
+  };
+
+  const submit = async () => {
+    if (!name) return Alert.alert('Missing', 'Route name is required.');
+    setBusy(true);
+    try {
+      const payload = {
+        name, school, driver_id: driverId || undefined, vehicle_id: vehicleId || undefined,
+        child_ids: childIds, notes,
+      };
+      if (isEdit) await Api.adminUpdateRoute(initial.id, payload);
+      else await Api.adminCreateRoute(payload);
+      onClose(); onSaved();
+    } catch (e: any) { Alert.alert('Error', e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHead}>
+            <Text style={[T.h3, { fontSize: 20 }]}>{isEdit ? 'Edit Route' : 'Add Route'}</Text>
+            <TouchableOpacity onPress={onClose}><X size={20} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
+            <Text style={styles.lab}>ROUTE NAME / NUMBER</Text>
+            <TextInput style={styles.inp} value={name} onChangeText={setName} placeholder="Route #1 — Hollywood AM" placeholderTextColor={C.textMuted} testID="route-name" />
+            <Text style={styles.lab}>SCHOOL</Text>
+            <TextInput style={styles.inp} value={school} onChangeText={setSchool} placeholder="Pine Crest School" placeholderTextColor={C.textMuted} />
+            <Text style={styles.lab}>DRIVER</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {drivers.map((d: any) => (
+                <TouchableOpacity key={d.id} onPress={() => setDriverId(d.id)} style={[styles.chip, driverId === d.id && styles.chipActive]}>
+                  <Text style={[styles.chipText, driverId === d.id && { color: C.gold }]}>{d.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={styles.lab}>VEHICLE</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {vehicles.map((v: any) => (
+                <TouchableOpacity key={v.id} onPress={() => setVehicleId(v.id)} style={[styles.chip, vehicleId === v.id && styles.chipActive]}>
+                  <Text style={[styles.chipText, vehicleId === v.id && { color: C.gold }]}>{v.make} {v.model}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={styles.lab}>CHILDREN ON ROUTE (TAP TO TOGGLE)</Text>
+            {kids.map((c: any) => (
+              <TouchableOpacity key={c.id} onPress={() => toggleChild(c.id)} style={[styles.kidPick, childIds.includes(c.id) && styles.kidPickActive]} testID={`route-pick-${c.id}`}>
+                <Text style={[styles.chipText, childIds.includes(c.id) && { color: C.gold }]}>
+                  {childIds.includes(c.id) ? '✓ ' : ''}{c.name} · {c.school}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <Text style={styles.lab}>NOTES</Text>
+            <TextInput style={[styles.inp, { height: 60 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={C.textMuted} />
+            <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="route-submit">
+              {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>{isEdit ? 'SAVE ROUTE' : 'CREATE ROUTE'}</Text>}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

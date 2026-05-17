@@ -100,4 +100,16 @@ export const Api = {
   adminAnnounce: (data: any) => api('/admin/announcement', { method: 'POST', body: data }),
   adminScheduleRequests: () => api<any[]>('/admin/schedule-requests'),
   announcements: () => api<any[]>('/announcements'),
+  adminUpdateUser: (uid: string, data: any) => api(`/admin/users/${uid}`, { method: 'PUT', body: data }),
+  adminUpdateVehicle: (vid: string, data: any) => api(`/admin/vehicles/${vid}`, { method: 'PUT', body: data }),
+  adminDeleteVehicle: (vid: string) => api(`/admin/vehicles/${vid}`, { method: 'DELETE' }),
+  adminListRoutes: () => api<any[]>('/admin/routes'),
+  adminCreateRoute: (data: any) => api('/admin/routes', { method: 'POST', body: data }),
+  adminUpdateRoute: (rid: string, data: any) => api(`/admin/routes/${rid}`, { method: 'PUT', body: data }),
+  adminDeleteRoute: (rid: string) => api(`/admin/routes/${rid}`, { method: 'DELETE' }),
+  adminOpsToday: () => api<any>('/admin/operations/today'),
+  adminEvents: (params: { date?: string; driver_id?: string; child_id?: string }) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([_, v]) => v) as any).toString();
+    return api<any[]>(`/admin/events${qs ? `?${qs}` : ''}`);
+  },
 };

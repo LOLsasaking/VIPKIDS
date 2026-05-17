@@ -14,6 +14,7 @@ export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
   const [role, setRole] = useState<'parent' | 'driver'>('parent');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export default function Register() {
     if (!name || !email || !password) return setErr('Name, email and password required');
     setBusy(true); setErr(null);
     try {
-      await Api.register({ name, email: email.trim(), password, phone, role });
+      await Api.register({ name, email: email.trim(), password, phone, address, role });
       Alert.alert('Account Submitted', 'Your account is pending admin approval. You will be able to log in once confirmed.', [
         { text: 'OK', onPress: () => router.replace('/login') },
       ]);
@@ -56,6 +57,8 @@ export default function Register() {
           <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="At least 6 characters" placeholderTextColor={C.textMuted} testID="register-password" />
           <Text style={styles.label}>PHONE (OPTIONAL)</Text>
           <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="+1 954 555 0000" placeholderTextColor={C.textMuted} />
+          <Text style={styles.label}>ADDRESS (OPTIONAL)</Text>
+          <TextInput style={styles.input} value={address} onChangeText={setAddress} placeholder="Street, City, State" placeholderTextColor={C.textMuted} testID="register-address" />
 
           <TouchableOpacity style={styles.btn} onPress={submit} disabled={busy} testID="register-submit">
             {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.btnText}>SUBMIT FOR APPROVAL</Text>}

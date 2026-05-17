@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Users, Car, Activity, LogOut, AlertTriangle } from 'lucide-react-native';
+import { Users, Car, Activity, LogOut, AlertTriangle, ClipboardList } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import { useAuth } from '@/src/auth';
 import LeafletMap, { MapMarker } from '@/src/components/LeafletMap';
@@ -95,6 +95,11 @@ export default function AdminOverview() {
             <View style={[styles.statusPip, { backgroundColor: r.location ? C.success : C.textMuted }]} />
           </View>
         ))}
+
+        <TouchableOpacity style={styles.opsBtn} onPress={() => router.push('/(admin)/operations')} testID="open-operations">
+          <ClipboardList size={18} color={C.bg} />
+          <Text style={styles.opsBtnText}>OPEN LIVE OPERATIONS DASHBOARD</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -129,4 +134,6 @@ const styles = StyleSheet.create({
   statusPip: { width: 10, height: 10, borderRadius: 5 },
   alertCard: { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: C.danger, borderWidth: 1, borderRadius: 12, padding: S.sm, marginBottom: S.md, gap: 4 },
   alertText: { color: C.danger, fontFamily: Fonts.body, fontSize: 11 },
+  opsBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.gold, padding: 14, borderRadius: 10, marginTop: S.lg },
+  opsBtnText: { color: C.bg, fontFamily: Fonts.bodySemiBold, fontSize: 12, letterSpacing: 1.5 },
 });

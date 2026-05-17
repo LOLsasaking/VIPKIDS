@@ -97,6 +97,7 @@ class RegisterIn(BaseModel):
     role: Role
     phone: Optional[str] = None
     photo_url: Optional[str] = None
+    address: Optional[str] = None  # for parents
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -123,6 +124,7 @@ class ChildIn(BaseModel):
     round_trip: bool = True  # Ida y Vuelta
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
+    contact_phone: Optional[str] = None  # child's own contact if applicable
 
 class VehicleIn(BaseModel):
     make: str
@@ -130,9 +132,18 @@ class VehicleIn(BaseModel):
     plate: str
     color: str
     year: Optional[int] = None
+    photo_url: Optional[str] = None
     registration_expiry: Optional[str] = None  # YYYY-MM-DD
     insurance_expiry: Optional[str] = None
     inspection_expiry: Optional[str] = None
+
+class RouteIn(BaseModel):
+    name: str
+    school: Optional[str] = None
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    child_ids: List[str] = []
+    notes: Optional[str] = None
 
 class CheckEventIn(BaseModel):
     child_id: str
@@ -186,6 +197,7 @@ async def register(data: RegisterIn):
         "role": data.role,
         "phone": data.phone,
         "photo_url": data.photo_url,
+        "address": data.address,
         "status": "pending",
         "created_at": now_utc().isoformat(),
         "notif_prefs": NotifPrefsIn().model_dump(),
@@ -286,7 +298,123 @@ class DriverComplianceIn(BaseModel):
     license_expiry: Optional[str] = None
     permit_expiry: Optional[str] = None
 
-@api.put("/admin/users/{uid}/compliance")
+@api.put("/admin/users/{uid}")
+async def admin_update_user(uid: str, data: dict, user: dict = Depends(require_role("admin"))):
+    """Update user profile fields (name/phone/email/address/photo_url)."""
+    allowed = {k: v for k, v in data.items() if k in ("name", "phone", "email", "address", "photo_url")}
+    if "email" in allowed:
+        allowed["email"] = allowed["email"].lower()
+    if allowed:
+        await db.users.update_one({"id": uid}, {"$set": allowed})
+    u = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    return u
+
+@api.put("/admin/vehicles/{vid}")
+async def admin_update_vehicle(vid: str, data: VehicleIn, user: dict = Depends(require_role("admin"))):
+    await db.vehicles.update_one({"id": vid}, {"$set": data.model_dump()})
+    v = await db.vehicles.find_one({"id": vid}, {"_id": 0})
+    return v
+
+@api.delete("/admin/vehicles/{vid}")
+async def admin_delete_vehicle(vid: str, user: dict = Depends(require_role("admin"))):
+    await db.vehicles.delete_one({"id": vid})
+    return {"ok": True}
+
+# ---------- Routes ----------
+@api.get("/admin/routes")
+async def admin_list_routes(user: dict = Depends(require_role("admin"))):
+    routes = await db.routes.find({}, {"_id": 0}).to_list(200)
+    for r in routes:
+        if r.get("driver_id"):
+            r["driver"] = await db.users.find_one({"id": r["driver_id"]}, {"_id": 0, "password_hash": 0})
+        if r.get("vehicle_id"):
+            r["vehicle"] = await db.vehicles.find_one({"id": r["vehicle_id"]}, {"_id": 0})
+        r["children"] = await db.children.find({"id": {"$in": r.get("child_ids", [])}}, {"_id": 0}).to_list(50)
+    return routes
+
+@api.post("/admin/routes")
+async def admin_create_route(data: RouteIn, user: dict = Depends(require_role("admin"))):
+    doc = {"id": new_id(), **data.model_dump(), "created_at": now_utc().isoformat()}
+    await db.routes.insert_one(doc)
+    # Side-effect: assign driver+vehicle to listed children for consistency
+    if doc.get("driver_id") or doc.get("vehicle_id"):
+        upd = {}
+        if doc.get("driver_id"): upd["driver_id"] = doc["driver_id"]
+        if doc.get("vehicle_id"): upd["vehicle_id"] = doc["vehicle_id"]
+        if upd and doc.get("child_ids"):
+            await db.children.update_many({"id": {"$in": doc["child_ids"]}}, {"$set": upd})
+    doc.pop("_id", None)
+    return doc
+
+@api.put("/admin/routes/{rid}")
+async def admin_update_route(rid: str, data: RouteIn, user: dict = Depends(require_role("admin"))):
+    await db.routes.update_one({"id": rid}, {"$set": data.model_dump()})
+    if data.driver_id or data.vehicle_id:
+        upd = {}
+        if data.driver_id: upd["driver_id"] = data.driver_id
+        if data.vehicle_id: upd["vehicle_id"] = data.vehicle_id
+        if upd and data.child_ids:
+            await db.children.update_many({"id": {"$in": data.child_ids}}, {"$set": upd})
+    r = await db.routes.find_one({"id": rid}, {"_id": 0})
+    return r
+
+@api.delete("/admin/routes/{rid}")
+async def admin_delete_route(rid: str, user: dict = Depends(require_role("admin"))):
+    await db.routes.delete_one({"id": rid})
+    return {"ok": True}
+
+# ---------- Operations (today's attendance) ----------
+@api.get("/admin/operations/today")
+async def admin_operations_today(user: dict = Depends(require_role("admin"))):
+    today = now_utc().date().isoformat()
+    children = await db.children.find({}, {"_id": 0}).to_list(500)
+    out = []
+    for c in children:
+        # latest event today
+        ev = await db.events.find_one(
+            {"child_id": c["id"], "created_at": {"$gte": today}},
+            {"_id": 0}, sort=[("created_at", -1)]
+        )
+        et = (ev or {}).get("event_type")
+        if et == "no_show":
+            status = "absent"
+        elif et in ("picked_up", "arrived_school", "leaving_school", "arriving_home", "alt_dropoff"):
+            status = "picked_up"
+        else:
+            status = "pending"
+        # enrich
+        driver = await db.users.find_one({"id": c.get("driver_id")}, {"_id": 0, "password_hash": 0}) if c.get("driver_id") else None
+        out.append({
+            "child": c, "driver": driver, "status": status,
+            "latest_event": ev,
+        })
+    counts = {"picked_up": 0, "pending": 0, "absent": 0}
+    for o in out:
+        counts[o["status"]] = counts.get(o["status"], 0) + 1
+    return {"date": today, "counts": counts, "children": out}
+
+@api.get("/admin/events")
+async def admin_events_history(date: Optional[str] = None, driver_id: Optional[str] = None,
+                                child_id: Optional[str] = None, user: dict = Depends(require_role("admin"))):
+    """Daily route history. date=YYYY-MM-DD (defaults to today)."""
+    d = date or now_utc().date().isoformat()
+    q: dict = {"created_at": {"$gte": d, "$lt": d + "T99"}}
+    if driver_id: q["driver_id"] = driver_id
+    if child_id: q["child_id"] = child_id
+    events = await db.events.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    # Enrich with names
+    for e in events:
+        if e.get("child_id"):
+            c = await db.children.find_one({"id": e["child_id"]}, {"_id": 0, "name": 1})
+            e["child_name"] = c.get("name") if c else None
+        if e.get("driver_id"):
+            d2 = await db.users.find_one({"id": e["driver_id"]}, {"_id": 0, "name": 1})
+            e["driver_name"] = d2.get("name") if d2 else None
+    return events
+
+@api.put("/admin/users/{uid}")  # already declared above; keep idempotent for older import order
+async def _noop(): pass
+
 async def admin_driver_compliance(uid: str, data: DriverComplianceIn, user: dict = Depends(require_role("admin"))):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if update:
