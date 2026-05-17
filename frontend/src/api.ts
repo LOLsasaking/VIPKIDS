@@ -43,6 +43,7 @@ export const Api = {
     api<{ access_token: string; user: any }>('/auth/register', { method: 'POST', body: data, auth: false }),
   me: () => api<any>('/auth/me'),
   updatePrefs: (prefs: any) => api('/auth/notif-prefs', { method: 'PUT', body: prefs }),
+  updatePhoto: (photo_url: string) => api('/auth/photo', { method: 'PUT', body: { photo_url } }),
 
   // Parent
   parentDashboard: () => api<any>('/parent/dashboard'),
@@ -76,6 +77,14 @@ export const Api = {
   adminCreateChild: (data: any) => api('/admin/children', { method: 'POST', body: data }),
   adminUpdateChild: (cid: string, data: any) => api(`/admin/children/${cid}`, { method: 'PUT', body: data }),
   adminDeleteChild: (cid: string) => api(`/admin/children/${cid}`, { method: 'DELETE' }),
+  adminAssignChild: (cid: string, data: { driver_id?: string; vehicle_id?: string }) =>
+    api(`/admin/children/${cid}/assign`, { method: 'PUT', body: data }),
+  adminChildPhoto: (cid: string, photo_url: string) =>
+    api(`/admin/children/${cid}/photo`, { method: 'PUT', body: { photo_url } }),
+  adminPending: () => api<any[]>('/admin/pending-users'),
+  adminApprove: (uid: string) => api(`/admin/approve/${uid}`, { method: 'POST' }),
+  adminReject: (uid: string) => api(`/admin/reject/${uid}`, { method: 'POST' }),
+  adminActivateParent: (uid: string) => api(`/admin/activate-parent/${uid}`, { method: 'POST' }),
   adminVehicles: () => api<any[]>('/admin/vehicles'),
   adminCreateVehicle: (data: any) => api('/admin/vehicles', { method: 'POST', body: data }),
   adminLiveRoutes: () => api<any[]>('/admin/live-routes'),

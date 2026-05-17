@@ -16,6 +16,7 @@ const EVENT_OPTIONS = [
   { key: 'arrived_school', label: 'ARRIVED AT SCHOOL' },
   { key: 'leaving_school', label: 'LEAVING SCHOOL' },
   { key: 'arriving_home', label: 'ARRIVING HOME' },
+  { key: 'no_show', label: 'NO SHOW' },
 ];
 
 export default function DriverHome() {

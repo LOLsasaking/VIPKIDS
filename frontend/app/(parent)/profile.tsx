@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LogOut, Bell, Mail, Phone } from 'lucide-react-native';
+import { LogOut, Bell, Mail, Phone, Camera } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import { Api } from '@/src/api';
+import { pickPhoto } from '@/src/photoPicker';
 import { C, S, T, Fonts } from '@/src/theme';
 
 const PREF_LIST: { key: string; label: string }[] = [
@@ -41,13 +42,29 @@ export default function Profile() {
     router.replace('/login');
   };
 
+  const changePhoto = async () => {
+    const photo = await pickPhoto();
+    if (!photo) return;
+    try {
+      await Api.updatePhoto(photo);
+      await refresh();
+    } catch (e: any) {
+      Alert.alert('Upload failed', e.message);
+    }
+  };
+
   if (!user) return null;
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       <ScrollView contentContainerStyle={{ padding: S.md, paddingBottom: S.xxxl }}>
         <View style={styles.profileCard}>
-          {user.photo_url ? <Image source={{ uri: user.photo_url }} style={styles.avatar} /> : <View style={[styles.avatar, { backgroundColor: C.bgTertiary }]} />}
+          <TouchableOpacity onPress={changePhoto} testID="change-photo-btn" activeOpacity={0.85}>
+            {user.photo_url ? <Image source={{ uri: user.photo_url }} style={styles.avatar} /> : <View style={[styles.avatar, { backgroundColor: C.bgTertiary }]} />}
+            <View style={styles.cameraOverlay}>
+              <Camera size={14} color={C.bg} strokeWidth={2} />
+            </View>
+          </TouchableOpacity>
           <Text style={styles.name}>{user.name}</Text>
           <Text style={styles.role}>{user.role.toUpperCase()}</Text>
           <View style={styles.meta}>
@@ -100,6 +117,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
   profileCard: { alignItems: 'center', backgroundColor: C.bgSecondary, padding: S.lg, borderRadius: 18, borderWidth: 1, borderColor: C.border },
   avatar: { width: 96, height: 96, borderRadius: 48, borderWidth: 2, borderColor: C.gold, marginBottom: S.md },
+  cameraOverlay: { position: 'absolute', bottom: S.md + 4, right: -4, backgroundColor: C.gold, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.bgSecondary },
   name: { ...T.h2, fontSize: 24 },
   role: { color: C.gold, fontFamily: Fonts.bodyMedium, letterSpacing: 2, fontSize: 11, marginTop: 4 },
   meta: { marginTop: S.md, gap: 6 },

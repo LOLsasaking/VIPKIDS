@@ -127,7 +127,7 @@ class VehicleIn(BaseModel):
 
 class CheckEventIn(BaseModel):
     child_id: str
-    event_type: Literal["on_the_way", "picked_up", "arrived_school", "leaving_school", "arriving_home", "delay"]
+    event_type: Literal["on_the_way", "picked_up", "arrived_school", "leaving_school", "arriving_home", "delay", "no_show"]
     message: Optional[str] = None
 
 class LocationIn(BaseModel):
@@ -163,7 +163,7 @@ class NotifPrefsIn(BaseModel):
     mute_all: bool = False
 
 # ---------- Auth ----------
-@api.post("/auth/register", response_model=TokenOut)
+@api.post("/auth/register")
 async def register(data: RegisterIn):
     if await db.users.find_one({"email": data.email.lower()}):
         raise HTTPException(400, "Email already registered")
@@ -176,24 +176,85 @@ async def register(data: RegisterIn):
         "role": data.role,
         "phone": data.phone,
         "photo_url": data.photo_url,
+        "status": "pending",
         "created_at": now_utc().isoformat(),
         "notif_prefs": NotifPrefsIn().model_dump(),
     }
     await db.users.insert_one(doc)
-    public = {k: v for k, v in doc.items() if k != "password_hash"}
-    return TokenOut(access_token=make_token(uid, data.role), user=public)
+    return {"ok": True, "message": "Account submitted. Awaiting admin approval.", "status": "pending"}
 
 @api.post("/auth/login", response_model=TokenOut)
 async def login(data: LoginIn):
     u = await db.users.find_one({"email": data.email.lower()})
     if not u or not verify_pw(data.password, u["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
+    if u.get("status") == "pending":
+        raise HTTPException(403, "Account pending admin approval")
+    if u.get("role") == "parent" and u.get("status") != "active":
+        raise HTTPException(403, "Awaiting driver assignment by admin")
     public = {k: v for k, v in u.items() if k not in ("password_hash", "_id")}
     return TokenOut(access_token=make_token(u["id"], u["role"]), user=public)
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(current_user)):
     return user
+
+class PhotoIn(BaseModel):
+    photo_url: str
+
+@api.put("/auth/photo")
+async def update_photo(data: PhotoIn, user: dict = Depends(current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"photo_url": data.photo_url}})
+    return {"ok": True, "photo_url": data.photo_url}
+
+class AssignIn(BaseModel):
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+
+@api.put("/admin/children/{cid}/assign")
+async def admin_assign(cid: str, data: AssignIn, user: dict = Depends(require_role("admin"))):
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    await db.children.update_one({"id": cid}, {"$set": update})
+    c = await db.children.find_one({"id": cid}, {"_id": 0})
+    return c
+
+class ChildPhotoIn(BaseModel):
+    photo_url: str
+
+@api.put("/admin/children/{cid}/photo")
+async def admin_child_photo(cid: str, data: ChildPhotoIn, user: dict = Depends(require_role("admin"))):
+    await db.children.update_one({"id": cid}, {"$set": {"photo_url": data.photo_url}})
+    return {"ok": True}
+
+@api.get("/admin/pending-users")
+async def admin_pending(user: dict = Depends(require_role("admin"))):
+    return await db.users.find({"status": "pending"}, {"_id": 0, "password_hash": 0}).to_list(200)
+
+@api.post("/admin/approve/{uid}")
+async def admin_approve(uid: str, user: dict = Depends(require_role("admin"))):
+    u = await db.users.find_one({"id": uid})
+    if not u:
+        raise HTTPException(404, "User not found")
+    new_status = "approved" if u.get("role") == "parent" else "active"
+    await db.users.update_one({"id": uid}, {"$set": {"status": new_status}})
+    return {"ok": True, "status": new_status}
+
+@api.post("/admin/activate-parent/{uid}")
+async def admin_activate_parent(uid: str, user: dict = Depends(require_role("admin"))):
+    """Activate a parent once at least one child has driver+vehicle assigned."""
+    kids = await db.children.find({"parent_id": uid}).to_list(50)
+    if not kids:
+        raise HTTPException(400, "Parent has no children yet — add a child first")
+    ready = any(k.get("driver_id") and k.get("vehicle_id") for k in kids)
+    if not ready:
+        raise HTTPException(400, "Assign a driver and vehicle to at least one child first")
+    await db.users.update_one({"id": uid}, {"$set": {"status": "active"}})
+    return {"ok": True, "status": "active"}
+
+@api.post("/admin/reject/{uid}")
+async def admin_reject(uid: str, user: dict = Depends(require_role("admin"))):
+    await db.users.delete_one({"id": uid})
+    return {"ok": True}
 
 @api.put("/auth/notif-prefs")
 async def update_prefs(prefs: NotifPrefsIn, user: dict = Depends(current_user)):
@@ -305,6 +366,7 @@ def _event_title(t: str, name: str) -> str:
         "leaving_school": f"{name} is leaving school",
         "arriving_home": f"{name} is almost home",
         "delay": f"Traffic delay for {name}",
+        "no_show": f"{name} did not show up for pickup",
     }.get(t, t)
 
 def _event_body(t: str, name: str) -> str:
@@ -315,6 +377,7 @@ def _event_body(t: str, name: str) -> str:
         "leaving_school": f"{name} just left school.",
         "arriving_home": f"{name} will arrive home shortly.",
         "delay": "There is a traffic delay on the route.",
+        "no_show": f"{name} was not present at pickup location. Please contact your driver.",
     }.get(t, "")
 
 @api.post("/driver/location")
@@ -530,12 +593,14 @@ async def seed_demo_data():
         "id": new_id(), "email": "parent@vipkids.com", "password_hash": hash_pw("parent123"),
         "name": "Isabella Sterling", "role": "parent", "phone": "+1-954-555-0301",
         "photo_url": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200",
+        "status": "active",
         "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
     }
     parent2 = {
         "id": new_id(), "email": "parent2@vipkids.com", "password_hash": hash_pw("parent123"),
         "name": "David Chen", "role": "parent", "phone": "+1-954-555-0302",
         "photo_url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200",
+        "status": "active",
         "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
     }
     await db.users.insert_many([admin, driver1, driver2, parent1, parent2])

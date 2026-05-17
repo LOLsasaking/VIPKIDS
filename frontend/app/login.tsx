@@ -6,7 +6,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView,
   Platform, ActivityIndicator, ScrollView, ImageBackground,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Link } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/auth';
@@ -113,6 +113,12 @@ export default function Login() {
                 )}
               </TouchableOpacity>
 
+              <Link href="/register" asChild>
+                <TouchableOpacity style={styles.secondaryBtn} testID="goto-register">
+                  <Text style={styles.secondaryBtnText}>CREATE NEW ACCOUNT</Text>
+                </TouchableOpacity>
+              </Link>
+
               <View style={styles.demoWrap}>
                 <Text style={styles.demoLabel}>DEMO ACCESS</Text>
                 <View style={styles.demoRow}>
@@ -156,6 +162,8 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     color: C.bg, fontFamily: Fonts.bodySemiBold, fontSize: 14, letterSpacing: 2.5,
   },
+  secondaryBtn: { marginTop: S.md, padding: 14, borderRadius: 10, borderWidth: 1, borderColor: C.borderLight, alignItems: 'center' },
+  secondaryBtnText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 12, letterSpacing: 2 },
   errorBox: { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: C.danger, borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: S.md },
   errorText: { color: C.danger, fontFamily: Fonts.body, fontSize: 13 },
   demoWrap: { marginTop: S.lg, paddingTop: S.md, borderTopWidth: 1, borderTopColor: C.border },

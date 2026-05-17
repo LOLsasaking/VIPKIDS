@@ -1,85 +1,329 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Image, TouchableOpacity, Alert } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, ActivityIndicator, Image, TouchableOpacity, Alert,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trash2 } from 'lucide-react-native';
+import { Trash2, Check, X, Plus, Link2, UserCheck, Camera } from 'lucide-react-native';
 import { Api } from '@/src/api';
+import { pickPhoto } from '@/src/photoPicker';
 import { C, S, T, Fonts } from '@/src/theme';
 
+type Tab = 'pending' | 'children' | 'parents' | 'drivers';
+
 export default function AdminUsers() {
-  const [tab, setTab] = useState<'parents' | 'drivers' | 'children'>('children');
+  const [tab, setTab] = useState<Tab>('pending');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddChild, setShowAddChild] = useState(false);
+  const [assignFor, setAssignFor] = useState<any | null>(null);
+  const [parents, setParents] = useState<any[]>([]);
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [vehicles, setVehicles] = useState<any[]>([]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       if (tab === 'children') setData(await Api.adminChildren());
+      else if (tab === 'pending') setData(await Api.adminPending());
       else setData(await Api.adminUsers(tab === 'parents' ? 'parent' : 'driver'));
     } finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, [tab]);
+  }, [tab]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Preload assignment options
+    Promise.all([Api.adminUsers('parent'), Api.adminUsers('driver'), Api.adminVehicles()])
+      .then(([p, d, v]) => { setParents(p); setDrivers(d); setVehicles(v); }).catch(() => {});
+  }, []);
 
   const remove = (id: string, label: string) => {
     Alert.alert('Remove', `Remove ${label}?`, [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive', onPress: async () => {
-          if (tab === 'children') await Api.adminDeleteChild(id);
-          else await Api.adminDeleteUser(id);
-          load();
-        }
-      }
+      { text: 'Remove', style: 'destructive', onPress: async () => {
+        if (tab === 'children') await Api.adminDeleteChild(id);
+        else await Api.adminDeleteUser(id);
+        load();
+      }},
     ]);
+  };
+
+  const approve = async (uid: string) => {
+    try { await Api.adminApprove(uid); await load(); Alert.alert('Approved', 'User can now be assigned (parents) or log in (drivers).'); }
+    catch (e: any) { Alert.alert('Error', e.message); }
+  };
+  const reject = async (uid: string) => {
+    Alert.alert('Reject', 'Reject and delete this account?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reject', style: 'destructive', onPress: async () => { await Api.adminReject(uid); await load(); }},
+    ]);
+  };
+
+  const activateParent = async (uid: string) => {
+    try { await Api.adminActivateParent(uid); Alert.alert('Activated', 'Parent can now log in.'); await load(); }
+    catch (e: any) { Alert.alert('Cannot activate', e.message); }
+  };
+
+  const changeChildPhoto = async (cid: string) => {
+    const photo = await pickPhoto();
+    if (!photo) return;
+    try { await Api.adminChildPhoto(cid, photo); await load(); }
+    catch (e: any) { Alert.alert('Error', e.message); }
   };
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={{ padding: S.md }}>
-        <Text style={[T.h2, { fontSize: 24, marginBottom: S.sm }]}>Manage</Text>
-        <View style={styles.tabs}>
-          {(['children', 'parents', 'drivers'] as const).map((t) => (
+        <View style={styles.headRow}>
+          <Text style={[T.h2, { fontSize: 24 }]}>Manage</Text>
+          {tab === 'children' && (
+            <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddChild(true)} testID="add-child-btn">
+              <Plus size={16} color={C.bg} />
+              <Text style={styles.addBtnText}>ADD CHILD</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: S.sm }}>
+          {(['pending', 'children', 'parents', 'drivers'] as Tab[]).map((t) => (
             <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]} testID={`admin-tab-${t}`}>
               <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t.toUpperCase()}</Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       </View>
 
       {loading ? <ActivityIndicator color={C.gold} /> : (
         <ScrollView contentContainerStyle={{ padding: S.md, paddingBottom: S.xxxl }}>
           {data.map((u: any) => (
             <View key={u.id} style={styles.row}>
-              {u.photo_url ? <Image source={{ uri: u.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />}
+              {tab === 'children' ? (
+                <TouchableOpacity onPress={() => changeChildPhoto(u.id)} testID={`change-photo-child-${u.id}`}>
+                  {u.photo_url ? <Image source={{ uri: u.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />}
+                  <View style={styles.camPip}><Camera size={10} color={C.bg} /></View>
+                </TouchableOpacity>
+              ) : (
+                u.photo_url ? <Image source={{ uri: u.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />
+              )}
               <View style={{ flex: 1, marginLeft: S.sm }}>
                 <Text style={styles.name}>{u.name}</Text>
                 {tab === 'children' && (
                   <Text style={styles.sub}>
-                    {u.school} · {u.driver?.name || 'No driver'} · {u.vehicle?.make || ''} {u.vehicle?.model || ''}
+                    {u.school} · {u.driver?.name || 'No driver'} · {u.vehicle?.make || 'No vehicle'}
                   </Text>
                 )}
-                {tab !== 'children' && <Text style={styles.sub}>{u.email}{u.phone ? ` · ${u.phone}` : ''}</Text>}
+                {tab !== 'children' && (
+                  <Text style={styles.sub}>
+                    {u.email}{u.phone ? ` · ${u.phone}` : ''}
+                    {u.role ? ` · ${u.role.toUpperCase()}` : ''}
+                    {u.status ? ` · ${u.status.toUpperCase()}` : ''}
+                  </Text>
+                )}
               </View>
-              <TouchableOpacity onPress={() => remove(u.id, u.name)} testID={`delete-${u.id}`}>
-                <Trash2 size={16} color={C.danger} />
-              </TouchableOpacity>
+
+              {/* Actions */}
+              {tab === 'pending' && (
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity onPress={() => approve(u.id)} style={styles.approveBtn} testID={`approve-${u.id}`}>
+                    <Check size={14} color={C.success} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => reject(u.id)} style={styles.rejectBtn} testID={`reject-${u.id}`}>
+                    <X size={14} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {tab === 'children' && (
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity onPress={() => setAssignFor(u)} style={styles.assignBtn} testID={`assign-${u.id}`}>
+                    <Link2 size={14} color={C.gold} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => remove(u.id, u.name)} testID={`delete-${u.id}`} style={{ padding: 8 }}>
+                    <Trash2 size={14} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {tab === 'parents' && u.status === 'approved' && (
+                <TouchableOpacity onPress={() => activateParent(u.id)} style={styles.activateBtn} testID={`activate-${u.id}`}>
+                  <UserCheck size={12} color={C.gold} />
+                  <Text style={styles.activateText}>ACTIVATE</Text>
+                </TouchableOpacity>
+              )}
+
+              {(tab === 'parents' || tab === 'drivers') && (
+                <TouchableOpacity onPress={() => remove(u.id, u.name)} testID={`delete-${u.id}`} style={{ padding: 8, marginLeft: 4 }}>
+                  <Trash2 size={14} color={C.danger} />
+                </TouchableOpacity>
+              )}
             </View>
           ))}
           {data.length === 0 && <Text style={[T.bodySm, { textAlign: 'center', padding: S.lg }]}>No records.</Text>}
         </ScrollView>
       )}
+
+      <AddChildModal visible={showAddChild} onClose={() => setShowAddChild(false)} parents={parents} onCreated={load} />
+      <AssignModal child={assignFor} onClose={() => setAssignFor(null)} drivers={drivers} vehicles={vehicles} onAssigned={load} />
     </SafeAreaView>
+  );
+}
+
+function AddChildModal({ visible, onClose, parents, onCreated }: any) {
+  const [name, setName] = useState('');
+  const [school, setSchool] = useState('');
+  const [pickup, setPickup] = useState('07:30');
+  const [dropoff, setDropoff] = useState('15:30');
+  const [home, setHome] = useState('');
+  const [schoolAddr, setSchoolAddr] = useState('');
+  const [parentId, setParentId] = useState('');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const pick = async () => { const p = await pickPhoto(); if (p) setPhoto(p); };
+
+  const submit = async () => {
+    if (!name || !school || !parentId) return Alert.alert('Missing', 'Name, school and parent are required.');
+    setBusy(true);
+    try {
+      await Api.adminCreateChild({
+        name, photo_url: photo || undefined, parent_id: parentId,
+        school, pickup_time: pickup, dropoff_time: dropoff,
+        home_address: home, school_address: schoolAddr,
+      });
+      setName(''); setSchool(''); setHome(''); setSchoolAddr(''); setPhoto(null); setParentId('');
+      onClose(); onCreated();
+    } catch (e: any) { Alert.alert('Error', e.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHead}>
+            <Text style={[T.h3, { fontSize: 20 }]}>Add Child</Text>
+            <TouchableOpacity onPress={onClose} testID="add-child-close"><X size={20} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
+            <TouchableOpacity onPress={pick} style={styles.photoSlot} testID="add-child-photo">
+              {photo ? <Image source={{ uri: photo }} style={styles.photoSlotImg} /> : <Camera size={26} color={C.gold} />}
+              <Text style={styles.photoSlotText}>{photo ? 'CHANGE PHOTO' : 'ADD PHOTO (OPTIONAL)'}</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.lab}>NAME</Text>
+            <TextInput style={styles.inp} value={name} onChangeText={setName} placeholderTextColor={C.textMuted} testID="child-name" />
+            <Text style={styles.lab}>PARENT</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {parents.map((p: any) => (
+                <TouchableOpacity key={p.id} onPress={() => setParentId(p.id)} style={[styles.chip, parentId === p.id && styles.chipActive]} testID={`pick-parent-${p.id}`}>
+                  <Text style={[styles.chipText, parentId === p.id && { color: C.gold }]}>{p.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={styles.lab}>SCHOOL</Text>
+            <TextInput style={styles.inp} value={school} onChangeText={setSchool} placeholderTextColor={C.textMuted} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>PICKUP</Text>
+                <TextInput style={styles.inp} value={pickup} onChangeText={setPickup} placeholder="07:30" placeholderTextColor={C.textMuted} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>DROPOFF</Text>
+                <TextInput style={styles.inp} value={dropoff} onChangeText={setDropoff} placeholder="15:30" placeholderTextColor={C.textMuted} />
+              </View>
+            </View>
+            <Text style={styles.lab}>HOME ADDRESS</Text>
+            <TextInput style={styles.inp} value={home} onChangeText={setHome} placeholderTextColor={C.textMuted} />
+            <Text style={styles.lab}>SCHOOL ADDRESS</Text>
+            <TextInput style={styles.inp} value={schoolAddr} onChangeText={setSchoolAddr} placeholderTextColor={C.textMuted} />
+
+            <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="add-child-submit">
+              {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>CREATE CHILD</Text>}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function AssignModal({ child, onClose, drivers, vehicles, onAssigned }: any) {
+  const [driverId, setDriverId] = useState<string>('');
+  const [vehicleId, setVehicleId] = useState<string>('');
+  useEffect(() => {
+    if (child) { setDriverId(child.driver_id || ''); setVehicleId(child.vehicle_id || ''); }
+  }, [child]);
+  if (!child) return null;
+  const save = async () => {
+    try {
+      await Api.adminAssignChild(child.id, { driver_id: driverId || undefined, vehicle_id: vehicleId || undefined });
+      onClose(); onAssigned();
+    } catch (e: any) { Alert.alert('Error', e.message); }
+  };
+  return (
+    <Modal visible={!!child} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalRoot}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHead}>
+            <Text style={[T.h3, { fontSize: 20 }]}>Assign · {child.name}</Text>
+            <TouchableOpacity onPress={onClose}><X size={20} color={C.textMuted} /></TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
+            <Text style={styles.lab}>DRIVER</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {drivers.map((d: any) => (
+                <TouchableOpacity key={d.id} onPress={() => setDriverId(d.id)} style={[styles.chip, driverId === d.id && styles.chipActive]} testID={`pick-driver-${d.id}`}>
+                  <Text style={[styles.chipText, driverId === d.id && { color: C.gold }]}>{d.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={styles.lab}>VEHICLE</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {vehicles.map((v: any) => (
+                <TouchableOpacity key={v.id} onPress={() => setVehicleId(v.id)} style={[styles.chip, vehicleId === v.id && styles.chipActive]} testID={`pick-vehicle-${v.id}`}>
+                  <Text style={[styles.chipText, vehicleId === v.id && { color: C.gold }]}>{v.make} {v.model}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.primaryBtn} onPress={save} testID="assign-save">
+              <Text style={styles.primaryBtnText}>SAVE ASSIGNMENT</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: C.bg },
-  tabs: { flexDirection: 'row', gap: 8 },
-  tab: { flex: 1, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: C.borderLight, alignItems: 'center' },
+  headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  addBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.gold, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  addBtnText: { color: C.bg, fontFamily: Fonts.bodySemiBold, fontSize: 11, letterSpacing: 1.5 },
+  tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: C.borderLight },
   tabActive: { borderColor: C.gold, backgroundColor: 'rgba(212,175,55,0.12)' },
-  tabText: { color: C.textSecondary, fontFamily: Fonts.bodyMedium, fontSize: 11, letterSpacing: 1 },
+  tabText: { color: C.textSecondary, fontFamily: Fonts.bodyMedium, fontSize: 10, letterSpacing: 1 },
   tabTextActive: { color: C.gold },
   row: { flexDirection: 'row', alignItems: 'center', padding: S.sm, backgroundColor: C.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginBottom: 8 },
   av: { width: 44, height: 44, borderRadius: 22 },
+  camPip: { position: 'absolute', bottom: -2, right: -2, backgroundColor: C.gold, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.bgSecondary },
   name: { ...T.body, fontSize: 14, fontFamily: Fonts.bodyMedium },
   sub: { ...T.bodySm, fontSize: 11 },
+  approveBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.success },
+  rejectBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.danger },
+  assignBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.gold },
+  activateBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: C.gold },
+  activateText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 10, letterSpacing: 0.8 },
+  modalRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: C.bgSecondary, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: S.md, maxHeight: '92%' },
+  modalHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: S.sm, borderBottomColor: C.border, borderBottomWidth: 1, marginBottom: S.sm },
+  lab: { ...T.caption, color: C.textSecondary, marginTop: S.sm, marginBottom: 6 },
+  inp: { backgroundColor: C.bg, borderRadius: 10, padding: 12, color: C.text, fontFamily: Fonts.body, fontSize: 14, borderWidth: 1, borderColor: C.border },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: C.borderLight },
+  chipActive: { borderColor: C.gold, backgroundColor: 'rgba(212,175,55,0.15)' },
+  chipText: { color: C.textSecondary, fontFamily: Fonts.bodyMedium, fontSize: 12 },
+  primaryBtn: { backgroundColor: C.gold, padding: 14, borderRadius: 10, alignItems: 'center', marginTop: S.md },
+  primaryBtnText: { color: C.bg, fontFamily: Fonts.bodySemiBold, letterSpacing: 2 },
+  photoSlot: { alignItems: 'center', justifyContent: 'center', padding: S.md, borderRadius: 14, borderWidth: 1, borderColor: C.borderLight, borderStyle: 'dashed', marginBottom: S.sm, gap: 6 },
+  photoSlotImg: { width: 80, height: 80, borderRadius: 40 },
+  photoSlotText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 10, letterSpacing: 1 },
 });
