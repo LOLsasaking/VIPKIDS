@@ -559,6 +559,15 @@ async def admin_schedule_requests(user: dict = Depends(require_role("admin"))):
 async def list_announcements(user: dict = Depends(current_user)):
     return await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
 
+
+# ---------- Migration ----------
+async def migrate_statuses():
+    """Ensure all users have a status field (for legacy demo seeds)."""
+    await db.users.update_many(
+        {"role": {"$in": ["parent", "driver", "admin"]}, "status": {"$exists": False}},
+        {"$set": {"status": "active"}}
+    )
+
 # ---------- Seed ----------
 async def seed_demo_data():
     if await db.users.count_documents({}) > 0:
@@ -646,6 +655,7 @@ async def on_startup():
     await db.users.create_index("email", unique=True)
     await db.children.create_index("parent_id")
     await db.children.create_index("driver_id")
+    await migrate_statuses()
     await seed_demo_data()
 
 @app.on_event("shutdown")
