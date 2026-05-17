@@ -4,7 +4,7 @@ import {
   Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trash2, Check, X, Plus, Link2, UserCheck, Camera } from 'lucide-react-native';
+import { Trash2, Check, X, Plus, Link2, UserCheck, Camera, PauseCircle, PlayCircle } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import { pickPhoto } from '@/src/photoPicker';
 import { C, S, T, Fonts } from '@/src/theme';
@@ -62,6 +62,21 @@ export default function AdminUsers() {
   const activateParent = async (uid: string) => {
     try { await Api.adminActivateParent(uid); Alert.alert('Activated', 'Parent can now log in.'); await load(); }
     catch (e: any) { Alert.alert('Cannot activate', e.message); }
+  };
+
+  const toggleSuspend = async (u: any) => {
+    try {
+      if (u.status === 'suspended') {
+        await Api.adminReactivate(u.id);
+      } else {
+        Alert.alert('Suspend', `Suspend ${u.name}? They will be unable to log in.`, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Suspend', style: 'destructive', onPress: async () => { await Api.adminSuspend(u.id); await load(); } },
+        ]);
+        return;
+      }
+      await load();
+    } catch (e: any) { Alert.alert('Error', e.message); }
   };
 
   const changeChildPhoto = async (cid: string) => {
@@ -151,9 +166,16 @@ export default function AdminUsers() {
               )}
 
               {(tab === 'parents' || tab === 'drivers') && (
-                <TouchableOpacity onPress={() => remove(u.id, u.name)} testID={`delete-${u.id}`} style={{ padding: 8, marginLeft: 4 }}>
-                  <Trash2 size={14} color={C.danger} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => toggleSuspend(u)} testID={`suspend-${u.id}`} style={{ padding: 8 }}>
+                    {u.status === 'suspended'
+                      ? <PlayCircle size={14} color={C.success} />
+                      : <PauseCircle size={14} color={C.gold} />}
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => remove(u.id, u.name)} testID={`delete-${u.id}`} style={{ padding: 8 }}>
+                    <Trash2 size={14} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
           ))}
@@ -176,6 +198,11 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
   const [schoolAddr, setSchoolAddr] = useState('');
   const [parentId, setParentId] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
+  const [birthDate, setBirthDate] = useState('');
+  const [grade, setGrade] = useState('');
+  const [roundTrip, setRoundTrip] = useState(true);
+  const [emergencyName, setEmergencyName] = useState('');
+  const [emergencyPhone, setEmergencyPhone] = useState('');
   const [busy, setBusy] = useState(false);
 
   const pick = async () => { const p = await pickPhoto(); if (p) setPhoto(p); };
@@ -188,8 +215,13 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
         name, photo_url: photo || undefined, parent_id: parentId,
         school, pickup_time: pickup, dropoff_time: dropoff,
         home_address: home, school_address: schoolAddr,
+        birth_date: birthDate || undefined, grade: grade || undefined,
+        round_trip: roundTrip,
+        emergency_contact_name: emergencyName || undefined,
+        emergency_contact_phone: emergencyPhone || undefined,
       });
       setName(''); setSchool(''); setHome(''); setSchoolAddr(''); setPhoto(null); setParentId('');
+      setBirthDate(''); setGrade(''); setEmergencyName(''); setEmergencyPhone(''); setRoundTrip(true);
       onClose(); onCreated();
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setBusy(false); }
@@ -235,6 +267,32 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
             <TextInput style={styles.inp} value={home} onChangeText={setHome} placeholderTextColor={C.textMuted} />
             <Text style={styles.lab}>SCHOOL ADDRESS</Text>
             <TextInput style={styles.inp} value={schoolAddr} onChangeText={setSchoolAddr} placeholderTextColor={C.textMuted} />
+
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>BIRTH DATE</Text>
+                <TextInput style={styles.inp} value={birthDate} onChangeText={setBirthDate} placeholder="2018-06-15" placeholderTextColor={C.textMuted} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.lab}>GRADE</Text>
+                <TextInput style={styles.inp} value={grade} onChangeText={setGrade} placeholder="1st" placeholderTextColor={C.textMuted} />
+              </View>
+            </View>
+
+            <Text style={styles.lab}>TRIP TYPE</Text>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <TouchableOpacity onPress={() => setRoundTrip(true)} style={[styles.chip, roundTrip && styles.chipActive]} testID="trip-round">
+                <Text style={[styles.chipText, roundTrip && { color: C.gold }]}>ROUND TRIP (IDA Y VUELTA)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setRoundTrip(false)} style={[styles.chip, !roundTrip && styles.chipActive]} testID="trip-oneway">
+                <Text style={[styles.chipText, !roundTrip && { color: C.gold }]}>ONE-WAY</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.lab}>EMERGENCY CONTACT NAME</Text>
+            <TextInput style={styles.inp} value={emergencyName} onChangeText={setEmergencyName} placeholderTextColor={C.textMuted} />
+            <Text style={styles.lab}>EMERGENCY CONTACT PHONE</Text>
+            <TextInput style={styles.inp} value={emergencyPhone} onChangeText={setEmergencyPhone} keyboardType="phone-pad" placeholderTextColor={C.textMuted} />
 
             <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="add-child-submit">
               {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>CREATE CHILD</Text>}

@@ -17,6 +17,7 @@ const EVENT_OPTIONS = [
   { key: 'leaving_school', label: 'LEAVING SCHOOL' },
   { key: 'arriving_home', label: 'ARRIVING HOME' },
   { key: 'no_show', label: 'NO SHOW' },
+  { key: 'alt_dropoff', label: 'ALT DROPOFF' },
 ];
 
 export default function DriverHome() {
@@ -71,9 +72,23 @@ export default function DriverHome() {
 
   useEffect(() => () => { if (locInterval.current) clearInterval(locInterval.current); }, []);
 
-  const checkin = async (childId: string, evType: string) => {
-    try { await Api.driverCheckin({ child_id: childId, event_type: evType }); await load(); }
+  const checkin = async (childId: string, evType: string, extra?: any) => {
+    try { await Api.driverCheckin({ child_id: childId, event_type: evType, ...(extra || {}) }); await load(); }
     catch (e: any) { Alert.alert('Error', e.message); }
+  };
+
+  const altDropoff = (childId: string) => {
+    if (Platform.OS === 'ios') {
+      Alert.prompt('Alternate Dropoff', 'Enter the alternate address:', (txt) => {
+        if (txt) checkin(childId, 'alt_dropoff', { address: txt, message: `Dropped at: ${txt}` });
+      });
+    } else {
+      // Android / web - simple confirm and use placeholder
+      Alert.alert('Alternate Dropoff', 'Confirm dropoff at a different address?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send', onPress: () => checkin(childId, 'alt_dropoff', { message: 'Dropped at alternate address (see chat for details)' }) },
+      ]);
+    }
   };
 
   const sendDelay = (childId: string) => {
@@ -160,7 +175,7 @@ export default function DriverHome() {
                   key={e.key}
                   testID={`checkin-${k.id}-${e.key}`}
                   style={styles.actionBtn}
-                  onPress={() => checkin(k.id, e.key)}
+                  onPress={() => e.key === 'alt_dropoff' ? altDropoff(k.id) : checkin(k.id, e.key)}
                 >
                   <Check size={12} color={C.gold} />
                   <Text style={styles.actionText}>{e.label}</Text>

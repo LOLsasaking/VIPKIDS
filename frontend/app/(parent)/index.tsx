@@ -71,6 +71,7 @@ export default function ParentHome() {
             testID={`child-card-${c.id}`}
             style={styles.tripCard}
             activeOpacity={0.85}
+            onLongPress={() => router.push({ pathname: '/(parent)/child/[id]', params: { id: c.id } })}
             onPress={() => router.push({ pathname: '/(parent)/map', params: { childId: c.id } })}
           >
             <View style={styles.tripTop}>
@@ -85,6 +86,8 @@ export default function ParentHome() {
                 </Text>
               </View>
             </View>
+
+            <Text style={styles.detailHint}>HOLD TO VIEW FULL CHILD PROFILE · TAP FOR LIVE MAP</Text>
 
             <View style={styles.divider} />
 
@@ -148,6 +151,7 @@ const styles = StyleSheet.create({
   eventChip: { backgroundColor: 'rgba(212,175,55,0.15)', borderColor: C.gold, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   eventChipText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 9, letterSpacing: 0.8 },
   divider: { height: 1, backgroundColor: C.border, marginVertical: S.md },
+  detailHint: { ...T.caption, fontSize: 8, color: C.textMuted, marginTop: 8, letterSpacing: 0.5 },
   driverRow: { flexDirection: 'row', alignItems: 'center', marginBottom: S.sm },
   driverPhoto: { width: 40, height: 40, borderRadius: 20 },
   driverName: { ...T.bodyLg, fontFamily: Fonts.bodySemiBold, fontSize: 15 },

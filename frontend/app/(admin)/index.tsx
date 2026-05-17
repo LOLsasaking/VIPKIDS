@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Users, Car, Activity, LogOut } from 'lucide-react-native';
+import { Users, Car, Activity, LogOut, AlertTriangle } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import { useAuth } from '@/src/auth';
 import LeafletMap, { MapMarker } from '@/src/components/LeafletMap';
@@ -14,14 +14,15 @@ export default function AdminOverview() {
   const [live, setLive] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [kids, setKids] = useState<any[]>([]);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const poll = useRef<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const [l, u, k] = await Promise.all([Api.adminLiveRoutes(), Api.adminUsers(), Api.adminChildren()]);
-      setLive(l); setUsers(u); setKids(k);
+      const [l, u, k, a] = await Promise.all([Api.adminLiveRoutes(), Api.adminUsers(), Api.adminChildren(), Api.adminComplianceAlerts()]);
+      setLive(l); setUsers(u); setKids(k); setAlerts(a);
     } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -65,6 +66,20 @@ export default function AdminOverview() {
           <StatCard label="FAMILIES" value={stats.parents} icon={<Users size={14} color={C.gold} />} />
           <StatCard label="CHILDREN" value={stats.kids} icon={<Users size={14} color={C.gold} />} />
         </View>
+
+        {alerts.length > 0 && (
+          <View style={styles.alertCard} testID="compliance-alerts">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={14} color={C.danger} />
+              <Text style={[T.caption, { color: C.danger }]}>COMPLIANCE ALERTS · {alerts.length}</Text>
+            </View>
+            {alerts.slice(0, 4).map((a, i) => (
+              <Text key={i} style={styles.alertText}>
+                {a.kind === 'vehicle' ? `${a.item.make} ${a.item.model} ${a.item.plate}` : a.item.name} — {a.field.replace(/_/g, ' ')} {a.expired ? 'EXPIRED' : 'expires'} {a.expires_on}
+              </Text>
+            ))}
+          </View>
+        )}
 
         <Text style={styles.sectionLabel}>LIVE FLEET MAP</Text>
         <LeafletMap markers={markers} height={300} zoom={11} />
@@ -112,4 +127,6 @@ const styles = StyleSheet.create({
   dName: { ...T.body, fontSize: 14, fontFamily: Fonts.bodyMedium },
   dKids: { ...T.bodySm, fontSize: 11 },
   statusPip: { width: 10, height: 10, borderRadius: 5 },
+  alertCard: { backgroundColor: 'rgba(239,68,68,0.08)', borderColor: C.danger, borderWidth: 1, borderRadius: 12, padding: S.sm, marginBottom: S.md, gap: 4 },
+  alertText: { color: C.danger, fontFamily: Fonts.body, fontSize: 11 },
 });

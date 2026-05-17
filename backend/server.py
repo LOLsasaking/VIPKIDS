@@ -118,17 +118,27 @@ class ChildIn(BaseModel):
     dropoff_time: str  # "15:30"
     home_address: str
     school_address: str
+    birth_date: Optional[str] = None  # YYYY-MM-DD
+    grade: Optional[str] = None
+    round_trip: bool = True  # Ida y Vuelta
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
 
 class VehicleIn(BaseModel):
     make: str
     model: str
     plate: str
     color: str
+    year: Optional[int] = None
+    registration_expiry: Optional[str] = None  # YYYY-MM-DD
+    insurance_expiry: Optional[str] = None
+    inspection_expiry: Optional[str] = None
 
 class CheckEventIn(BaseModel):
     child_id: str
-    event_type: Literal["on_the_way", "picked_up", "arrived_school", "leaving_school", "arriving_home", "delay", "no_show"]
+    event_type: Literal["on_the_way", "picked_up", "arrived_school", "leaving_school", "arriving_home", "delay", "no_show", "alt_dropoff"]
     message: Optional[str] = None
+    address: Optional[str] = None  # for alt_dropoff
 
 class LocationIn(BaseModel):
     lat: float
@@ -190,6 +200,8 @@ async def login(data: LoginIn):
         raise HTTPException(401, "Invalid email or password")
     if u.get("status") == "pending":
         raise HTTPException(403, "Account pending admin approval")
+    if u.get("status") == "suspended":
+        raise HTTPException(403, "Account suspended. Contact your administrator.")
     if u.get("role") == "parent" and u.get("status") != "active":
         raise HTTPException(403, "Awaiting driver assignment by admin")
     public = {k: v for k, v in u.items() if k not in ("password_hash", "_id")}
@@ -255,6 +267,92 @@ async def admin_activate_parent(uid: str, user: dict = Depends(require_role("adm
 async def admin_reject(uid: str, user: dict = Depends(require_role("admin"))):
     await db.users.delete_one({"id": uid})
     return {"ok": True}
+
+@api.post("/admin/users/{uid}/suspend")
+async def admin_suspend(uid: str, user: dict = Depends(require_role("admin"))):
+    await db.users.update_one({"id": uid}, {"$set": {"status": "suspended"}})
+    return {"ok": True, "status": "suspended"}
+
+@api.post("/admin/users/{uid}/reactivate")
+async def admin_reactivate(uid: str, user: dict = Depends(require_role("admin"))):
+    u = await db.users.find_one({"id": uid})
+    if not u:
+        raise HTTPException(404, "User not found")
+    new_status = "active" if u.get("role") in ("driver", "admin") else "approved"
+    await db.users.update_one({"id": uid}, {"$set": {"status": new_status}})
+    return {"ok": True, "status": new_status}
+
+class DriverComplianceIn(BaseModel):
+    license_expiry: Optional[str] = None
+    permit_expiry: Optional[str] = None
+
+@api.put("/admin/users/{uid}/compliance")
+async def admin_driver_compliance(uid: str, data: DriverComplianceIn, user: dict = Depends(require_role("admin"))):
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    if update:
+        await db.users.update_one({"id": uid}, {"$set": update})
+    return {"ok": True}
+
+@api.get("/admin/compliance-alerts")
+async def admin_compliance_alerts(user: dict = Depends(require_role("admin"))):
+    """Return vehicles/drivers with expiries within 30 days or already expired."""
+    today = now_utc().date()
+    horizon = (today + timedelta(days=30)).isoformat()
+    today_s = today.isoformat()
+    alerts = []
+    async for v in db.vehicles.find({}, {"_id": 0}):
+        for fld in ("registration_expiry", "insurance_expiry", "inspection_expiry"):
+            d = v.get(fld)
+            if d and d <= horizon:
+                alerts.append({"kind": "vehicle", "item": v, "field": fld, "expires_on": d, "expired": d < today_s})
+    async for d in db.users.find({"role": "driver"}, {"_id": 0, "password_hash": 0}):
+        for fld in ("license_expiry", "permit_expiry"):
+            dt = d.get(fld)
+            if dt and dt <= horizon:
+                alerts.append({"kind": "driver", "item": d, "field": fld, "expires_on": dt, "expired": dt < today_s})
+    return alerts
+
+# ---------- Payments ----------
+class PaymentIn(BaseModel):
+    parent_id: str
+    month: str  # YYYY-MM
+    amount: float
+    status: Literal["paid", "pending", "overdue"] = "pending"
+    notes: Optional[str] = None
+
+@api.get("/admin/payments")
+async def admin_list_payments(month: Optional[str] = None, user: dict = Depends(require_role("admin"))):
+    q = {"month": month} if month else {}
+    pays = await db.payments.find(q, {"_id": 0}).sort("month", -1).to_list(500)
+    for p in pays:
+        parent = await db.users.find_one({"id": p["parent_id"]}, {"_id": 0, "password_hash": 0})
+        p["parent"] = parent
+    return pays
+
+@api.post("/admin/payments")
+async def admin_create_payment(data: PaymentIn, user: dict = Depends(require_role("admin"))):
+    doc = {"id": new_id(), **data.model_dump(), "created_at": now_utc().isoformat()}
+    await db.payments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.put("/admin/payments/{pid}")
+async def admin_update_payment(pid: str, data: PaymentIn, user: dict = Depends(require_role("admin"))):
+    await db.payments.update_one({"id": pid}, {"$set": data.model_dump()})
+    return {"ok": True}
+
+@api.delete("/admin/payments/{pid}")
+async def admin_delete_payment(pid: str, user: dict = Depends(require_role("admin"))):
+    await db.payments.delete_one({"id": pid})
+    return {"ok": True}
+
+# ---------- Parent read-only child detail ----------
+@api.get("/parent/child/{cid}")
+async def parent_child_detail(cid: str, user: dict = Depends(require_role("parent"))):
+    child = await db.children.find_one({"id": cid, "parent_id": user["id"]}, {"_id": 0})
+    if not child:
+        raise HTTPException(404, "Child not found")
+    return await _enrich_child(child)
 
 @api.put("/auth/notif-prefs")
 async def update_prefs(prefs: NotifPrefsIn, user: dict = Depends(current_user)):
@@ -341,6 +439,7 @@ async def driver_checkin(data: CheckEventIn, user: dict = Depends(require_role("
         "driver_id": user["id"],
         "event_type": data.event_type,
         "message": data.message,
+        "address": data.address,
         "created_at": now_utc().isoformat(),
     }
     await db.events.insert_one(ev)
@@ -367,6 +466,7 @@ def _event_title(t: str, name: str) -> str:
         "arriving_home": f"{name} is almost home",
         "delay": f"Traffic delay for {name}",
         "no_show": f"{name} did not show up for pickup",
+        "alt_dropoff": f"{name} dropped at alternate address",
     }.get(t, t)
 
 def _event_body(t: str, name: str) -> str:
@@ -378,6 +478,7 @@ def _event_body(t: str, name: str) -> str:
         "arriving_home": f"{name} will arrive home shortly.",
         "delay": "There is a traffic delay on the route.",
         "no_show": f"{name} was not present at pickup location. Please contact your driver.",
+        "alt_dropoff": f"{name} was dropped at an alternate location.",
     }.get(t, "")
 
 @api.post("/driver/location")

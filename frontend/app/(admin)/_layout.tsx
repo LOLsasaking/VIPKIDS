@@ -1,5 +1,5 @@
 import { Tabs, Redirect } from 'expo-router';
-import { LayoutDashboard, Users, Megaphone } from 'lucide-react-native';
+import { LayoutDashboard, Users, Megaphone, DollarSign } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import { C, Fonts } from '@/src/theme';
 
@@ -18,6 +18,7 @@ export default function AdminLayout() {
     }}>
       <Tabs.Screen name="index" options={{ title: 'Overview', tabBarIcon: ({ color }) => <LayoutDashboard size={22} color={color} strokeWidth={1.6} /> }} />
       <Tabs.Screen name="users" options={{ title: 'Users', tabBarIcon: ({ color }) => <Users size={22} color={color} strokeWidth={1.6} /> }} />
+      <Tabs.Screen name="payments" options={{ title: 'Payments', tabBarIcon: ({ color }) => <DollarSign size={22} color={color} strokeWidth={1.6} /> }} />
       <Tabs.Screen name="announce" options={{ title: 'Announce', tabBarIcon: ({ color }) => <Megaphone size={22} color={color} strokeWidth={1.6} /> }} />
     </Tabs>
   );
