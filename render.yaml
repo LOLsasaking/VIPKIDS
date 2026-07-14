@@ -1,0 +1,26 @@
+# Render Blueprint for the VIP KIDS backend.
+# In Render: New + → Blueprint → connect this repo → it reads this file.
+# You still fill the secrets marked `sync: false` (MongoDB Atlas URL, admin creds).
+services:
+  - type: web
+    name: vipkids-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health/ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DB_NAME
+        value: vipkids
+      - key: JWT_SECRET
+        generateValue: true          # Render generates a strong secret
+      - key: MONGO_URL
+        sync: false                   # paste your MongoDB Atlas connection string
+      - key: ADMIN_EMAIL
+        sync: false                   # your admin login email
+      - key: ADMIN_PASSWORD
+        sync: false                   # 12+ chars
+      - key: ALLOWED_ORIGINS
+        value: https://vipkids-web.example   # native app ignores CORS; any https value satisfies prod checks
