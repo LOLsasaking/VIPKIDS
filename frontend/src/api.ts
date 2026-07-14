@@ -4,8 +4,9 @@
  */
 import { storage } from '@/src/utils/storage';
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BASE}/api`;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 export const TOKEN_KEY = 'vipkids_token';
 
@@ -16,19 +17,38 @@ export type ApiOptions = {
 };
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<T> {
+  if (!BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
+  if (!__DEV__ && !BASE.startsWith('https://')) {
+    throw new Error('VIP Kids requires a secure HTTPS connection in production.');
+  }
   const { method = 'GET', body, auth = true } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth) {
     const token = await storage.secureGet(TOKEN_KEY, '');
     if (token) headers.Authorization = `Bearer ${token}`;
   }
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') throw new Error('The secure service did not respond. Please try again.');
+    throw new Error('Unable to reach the secure service. Check your connection and try again.');
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  if (text) {
+    try { data = JSON.parse(text); }
+    catch { data = { detail: text.trim() || `Request failed (${res.status})` }; }
+  }
   if (!res.ok) {
     const msg = data?.detail || data?.message || `Request failed (${res.status})`;
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -39,8 +59,12 @@ export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise
 export const Api = {
   login: (email: string, password: string) =>
     api<{ access_token: string; user: any }>('/auth/login', { method: 'POST', body: { email, password }, auth: false }),
-  register: (data: any) =>
-    api<{ access_token: string; user: any }>('/auth/register', { method: 'POST', body: data, auth: false }),
+  register: (data: { name: string; email: string; password: string; role: 'parent' | 'driver'; phone?: string; address?: string }) =>
+    api<{ ok: boolean; status: 'pending'; message: string }>('/auth/register', { method: 'POST', body: data, auth: false }),
+  deleteAccount: (email: string, password: string) =>
+    api<{ ok: boolean; message: string }>('/auth/delete-account', {
+      method: 'POST', body: { email, password, confirmation: 'DELETE' }, auth: false,
+    }),
   me: () => api<any>('/auth/me'),
   updatePrefs: (prefs: any) => api('/auth/notif-prefs', { method: 'PUT', body: prefs }),
   updatePhoto: (photo_url: string) => api('/auth/photo', { method: 'PUT', body: { photo_url } }),
@@ -48,17 +72,35 @@ export const Api = {
   // Parent
   parentDashboard: () => api<any>('/parent/dashboard'),
   parentChildren: () => api<any[]>('/parent/children'),
+  parentCreateChild: (data: any) => api<any>('/parent/children', { method: 'POST', body: data }),
   parentTrack: (childId: string) => api<any>(`/parent/track/${childId}`),
   parentScheduleRequest: (data: any) => api('/parent/schedule-request', { method: 'POST', body: data }),
   parentListScheduleRequests: () => api<any[]>('/parent/schedule-requests'),
+
+  // Child (restricted assigned-ride view)
+  childTrack: () => api<any>('/child/track'),
+  childReady: () => api<{ ok: boolean; message: string }>('/child/ready', { method: 'POST' }),
 
   // Driver
   driverToday: () => api<any[]>('/driver/today'),
   driverCheckin: (data: any) => api('/driver/checkin', { method: 'POST', body: data }),
   driverLocation: (lat: number, lng: number) =>
     api('/driver/location', { method: 'POST', body: { lat, lng } }),
-  driverStart: () => api('/driver/route/start', { method: 'POST' }),
-  driverEnd: () => api('/driver/route/end', { method: 'POST' }),
+  driverStart: (phase: 'morning' | 'afternoon') => api('/driver/route/start', {
+    method: 'POST',
+    body: {
+      phase,
+      seatbelts_checked: true,
+      fuel_level_checked: true,
+      phone_charged_and_mounted: true,
+    },
+  }),
+  driverPlan: (data: { phase: 'morning' | 'afternoon'; addresses: string[]; points: Array<{ lat: number; lng: number }> }) =>
+    api('/driver/route/plan', { method: 'POST', body: data }),
+  driverEnd: (safetyCheck?: { all_children_accounted_for: boolean; vehicle_checked_empty: boolean }) =>
+    api('/driver/route/end', { method: 'POST', body: safetyCheck }),
+  driverEmergency: (data: { lat?: number; lng?: number; message?: string }) =>
+    api<any>('/driver/emergency', { method: 'POST', body: data }),
 
   // Chat
   conversations: () => api<any[]>('/chat/conversations'),
@@ -68,19 +110,20 @@ export const Api = {
 
   // Notifs
   notifications: () => api<any[]>('/notifications'),
+  markNotificationRead: (id: string) => api(`/notifications/${id}/read`, { method: 'POST' }),
 
   // Admin
   adminUsers: (role?: string) => api<any[]>(`/admin/users${role ? `?role=${role}` : ''}`),
-  adminCreateUser: (data: any) => api('/admin/users', { method: 'POST', body: data }),
   adminDeleteUser: (uid: string) => api(`/admin/users/${uid}`, { method: 'DELETE' }),
   adminChildren: () => api<any[]>('/admin/children'),
   adminCreateChild: (data: any) => api('/admin/children', { method: 'POST', body: data }),
   adminUpdateChild: (cid: string, data: any) => api(`/admin/children/${cid}`, { method: 'PUT', body: data }),
   adminDeleteChild: (cid: string) => api(`/admin/children/${cid}`, { method: 'DELETE' }),
+  adminSetChildAccess: (cid: string, data: { email: string; password?: string; enabled?: boolean; guardian_consent_confirmed: boolean }) =>
+    api(`/admin/children/${cid}/access`, { method: 'PUT', body: data }),
+  adminDeleteChildAccess: (cid: string) => api(`/admin/children/${cid}/access`, { method: 'DELETE' }),
   adminAssignChild: (cid: string, data: { driver_id?: string; vehicle_id?: string }) =>
     api(`/admin/children/${cid}/assign`, { method: 'PUT', body: data }),
-  adminChildPhoto: (cid: string, photo_url: string) =>
-    api(`/admin/children/${cid}/photo`, { method: 'PUT', body: { photo_url } }),
   adminPending: () => api<any[]>('/admin/pending-users'),
   adminApprove: (uid: string) => api(`/admin/approve/${uid}`, { method: 'POST' }),
   adminReject: (uid: string) => api(`/admin/reject/${uid}`, { method: 'POST' }),
@@ -89,10 +132,6 @@ export const Api = {
   adminReactivate: (uid: string) => api(`/admin/users/${uid}/reactivate`, { method: 'POST' }),
   adminDriverCompliance: (uid: string, data: any) => api(`/admin/users/${uid}/compliance`, { method: 'PUT', body: data }),
   adminComplianceAlerts: () => api<any[]>('/admin/compliance-alerts'),
-  adminPayments: (month?: string) => api<any[]>(`/admin/payments${month ? `?month=${month}` : ''}`),
-  adminCreatePayment: (data: any) => api('/admin/payments', { method: 'POST', body: data }),
-  adminUpdatePayment: (pid: string, data: any) => api(`/admin/payments/${pid}`, { method: 'PUT', body: data }),
-  adminDeletePayment: (pid: string) => api(`/admin/payments/${pid}`, { method: 'DELETE' }),
   parentChildDetail: (cid: string) => api<any>(`/parent/child/${cid}`),
   adminVehicles: () => api<any[]>('/admin/vehicles'),
   adminCreateVehicle: (data: any) => api('/admin/vehicles', { method: 'POST', body: data }),
@@ -112,4 +151,5 @@ export const Api = {
     const qs = new URLSearchParams(Object.entries(params).filter(([_, v]) => v) as any).toString();
     return api<any[]>(`/admin/events${qs ? `?${qs}` : ''}`);
   },
+  adminActivity: (date?: string) => api<any[]>(`/admin/activity${date ? `?date=${encodeURIComponent(date)}` : ''}`),
 };

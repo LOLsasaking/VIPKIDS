@@ -1,5 +1,5 @@
 /**
- * Root layout — loads premium fonts, wraps app in AuthProvider + SafeArea.
+ * Root layout — loads the mobility UI fonts and shared providers.
  */
 import { Stack } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import {
   Outfit_600SemiBold,
 } from '@expo-google-fonts/outfit';
 import { AuthProvider } from '@/src/auth';
+import '@/src/backgroundLocation';
 import { C } from '@/src/theme';
 
 export default function RootLayout() {
@@ -42,8 +43,12 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="login" />
+          <Stack.Screen name="register" />
+          <Stack.Screen name="privacy" />
+          <Stack.Screen name="delete-account" />
           <Stack.Screen name="(parent)" />
           <Stack.Screen name="(driver)" />
+          <Stack.Screen name="(child)" />
           <Stack.Screen name="(admin)" />
         </Stack>
       </AuthProvider>

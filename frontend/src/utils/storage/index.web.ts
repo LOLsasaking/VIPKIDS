@@ -2,7 +2,8 @@
 // Helpers never throw: reads return `fallback`, writes return `false`.
 // Values supported: string | number | boolean | null (JSON-serialized on disk).
 // Usage: import { storage } from "@/src/utils/storage"; await storage.getItem(key, fallback);
-// No Keychain on web — secure* helpers reuse AsyncStorage (no expo-secure-store).
+// No Keychain on web — authentication values use sessionStorage so tokens do not
+// persist after the browser session closes.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -46,23 +47,46 @@ export class Storage extends StorageBase {
     }
   }
 
-  // Browsers have no Keychain — secure* helpers fall through to AsyncStorage.
+  private secureKey(key: string) {
+    return `vipkids-secure:${key}`;
+  }
+
   async secureGet<Fallback extends StorageItemValue>(
     key: string,
     fallback: Fallback,
   ): Promise<Fallback | null> {
-    return this.getItem(key, fallback);
+    try {
+      if (typeof sessionStorage === "undefined") return fallback;
+      return this.retrieve(sessionStorage.getItem(this.secureKey(key)), fallback);
+    } catch (e) {
+      this.warn("secureGet", key, e);
+      return fallback;
+    }
   }
 
   async secureSet<Value extends StorageItemValue>(
     key: string,
     value: Value,
   ): Promise<boolean> {
-    return this.setItem(key, value);
+    try {
+      if (typeof sessionStorage === "undefined") return false;
+      sessionStorage.setItem(this.secureKey(key), JSON.stringify(value));
+      return true;
+    } catch (e) {
+      this.warn("secureSet", key, e);
+      return false;
+    }
   }
 
   async secureRemove(key: string): Promise<boolean> {
-    return this.removeItem(key);
+    try {
+      if (typeof sessionStorage === "undefined") return false;
+      sessionStorage.removeItem(this.secureKey(key));
+      return true;
+    } catch (e) {
+      this.warn("secureRemove", key, e);
+      return false;
+    }
   }
 }
 

@@ -75,6 +75,11 @@ agenthub/agents/youtube/db
 
 # Build caches
 .cache/
+.scratch/
+
+# Local preview artifacts
+expo-preview-qr.png
+vipkids-phone-preview-qr.png
 
 memory/test_credentials.md
 

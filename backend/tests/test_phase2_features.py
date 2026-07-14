@@ -1,4 +1,4 @@
-"""VIP KIDS Phase 2 — registration gate, admin approval/activation, no_show, photo upload."""
+"""VIP KIDS Phase 2 — private provisioning, parent activation, no_show, photo upload."""
 import os
 import time
 import uuid
@@ -57,97 +57,65 @@ class TestSeededLogins:
         assert r.json()["user"]["status"] == "active"
 
 
-# --------- Registration creates pending user, no token ---------
-class TestRegisterPending:
-    def test_register_parent_pending(self):
-        email = f"test_parent_{uuid.uuid4().hex[:8]}@example.com"
+# --------- Public self-registration is not available ---------
+class TestPublicRegistrationDisabled:
+    def test_public_registration_route_is_absent(self):
         r = requests.post(f"{API}/auth/register",
+                          json={"email": "no-self-signup@example.com", "password": "secret123",
+                                "name": "No Signup", "role": "parent"},
+                          timeout=20)
+        assert r.status_code == 404
+
+
+# --------- Concierge/admin provisions approved service users ---------
+class TestAdminProvisioning:
+    def test_admin_provisions_parent(self, admin_token):
+        email = f"test_parent_{uuid.uuid4().hex[:8]}@example.com"
+        r = requests.post(f"{API}/admin/users", headers=hdr(admin_token),
                           json={"email": email, "password": "secret123",
                                 "name": "TEST Parent", "role": "parent", "phone": "+1-555-0000"},
                           timeout=20)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body.get("status") == "pending"
-        assert "access_token" not in body
+        assert body["status"] == "approved"
         _state["parent_email"] = email
         _state["parent_pwd"] = "secret123"
+        _state["parent_id"] = body["id"]
 
-    def test_register_driver_pending(self):
+    def test_admin_provisions_driver(self, admin_token):
         email = f"test_driver_{uuid.uuid4().hex[:8]}@example.com"
-        r = requests.post(f"{API}/auth/register",
+        r = requests.post(f"{API}/admin/users", headers=hdr(admin_token),
                           json={"email": email, "password": "secret123",
                                 "name": "TEST Driver", "role": "driver"},
                           timeout=20)
-        assert r.status_code == 200
-        assert r.json()["status"] == "pending"
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "active"
         _state["driver_email"] = email
         _state["driver_pwd"] = "secret123"
+        _state["driver_id"] = r.json()["id"]
 
-    def test_register_duplicate(self):
+    def test_admin_cannot_provision_duplicate(self, admin_token):
         email = _state.get("parent_email")
-        r = requests.post(f"{API}/auth/register",
+        r = requests.post(f"{API}/admin/users", headers=hdr(admin_token),
                           json={"email": email, "password": "secret123",
                                 "name": "X", "role": "parent"}, timeout=20)
         assert r.status_code == 400
 
 
-# --------- Pending users cannot login ---------
-class TestPendingLoginBlocked:
-    def test_pending_parent_blocked(self):
-        r = requests.post(f"{API}/auth/login",
-                          json={"email": _state["parent_email"], "password": _state["parent_pwd"]},
-                          timeout=20)
-        assert r.status_code == 403
-        assert "pending" in r.text.lower()
-
-    def test_pending_driver_blocked(self):
-        r = requests.post(f"{API}/auth/login",
-                          json={"email": _state["driver_email"], "password": _state["driver_pwd"]},
-                          timeout=20)
-        assert r.status_code == 403
-
-
-# --------- Admin pending list ---------
-class TestAdminPending:
-    def test_list_pending_includes_new(self, admin_token):
-        r = requests.get(f"{API}/admin/pending-users", headers=hdr(admin_token), timeout=20)
-        assert r.status_code == 200
-        emails = [u["email"] for u in r.json()]
-        assert _state["parent_email"] in emails
-        assert _state["driver_email"] in emails
-        # capture ids
-        for u in r.json():
-            if u["email"] == _state["parent_email"]:
-                _state["parent_id"] = u["id"]
-            if u["email"] == _state["driver_email"]:
-                _state["driver_id"] = u["id"]
-
-
-# --------- Approve flow ---------
-class TestApprove:
-    def test_approve_driver_sets_active(self, admin_token):
-        r = requests.post(f"{API}/admin/approve/{_state['driver_id']}",
-                          headers=hdr(admin_token), timeout=20)
-        assert r.status_code == 200
-        assert r.json()["status"] == "active"
-        # driver can now login
-        r2 = requests.post(f"{API}/auth/login",
-                           json={"email": _state["driver_email"], "password": _state["driver_pwd"]},
-                           timeout=20)
-        assert r2.status_code == 200
-
-    def test_approve_parent_sets_approved_not_active(self, admin_token):
-        r = requests.post(f"{API}/admin/approve/{_state['parent_id']}",
-                          headers=hdr(admin_token), timeout=20)
-        assert r.status_code == 200
-        assert r.json()["status"] == "approved"
-
-    def test_approved_parent_still_blocked(self):
+# --------- Parent stays blocked until a complete assignment ---------
+class TestProvisionedLoginGate:
+    def test_approved_parent_blocked(self):
         r = requests.post(f"{API}/auth/login",
                           json={"email": _state["parent_email"], "password": _state["parent_pwd"]},
                           timeout=20)
         assert r.status_code == 403
         assert "driver assignment" in r.text.lower() or "awaiting" in r.text.lower()
+
+    def test_active_driver_can_login(self):
+        r = requests.post(f"{API}/auth/login",
+                          json={"email": _state["driver_email"], "password": _state["driver_pwd"]},
+                          timeout=20)
+        assert r.status_code == 200
 
 
 # --------- Activate parent flow ---------
@@ -256,14 +224,13 @@ class TestNoShowEvent:
 # --------- Reject flow ---------
 class TestReject:
     def test_reject_deletes_user(self, admin_token):
-        # register fresh pending user
+        # Provision a fresh parent through the private concierge/admin path.
         email = f"test_reject_{uuid.uuid4().hex[:8]}@example.com"
-        requests.post(f"{API}/auth/register",
-                      json={"email": email, "password": "secret123",
-                            "name": "Reject Me", "role": "parent"}, timeout=20)
-        # find id
-        pend = requests.get(f"{API}/admin/pending-users", headers=hdr(admin_token), timeout=20).json()
-        uid = next(u["id"] for u in pend if u["email"] == email)
+        created = requests.post(f"{API}/admin/users", headers=hdr(admin_token),
+                                json={"email": email, "password": "secret123",
+                                      "name": "Reject Me", "role": "parent"}, timeout=20)
+        assert created.status_code == 200
+        uid = created.json()["id"]
         r = requests.post(f"{API}/admin/reject/{uid}", headers=hdr(admin_token), timeout=20)
         assert r.status_code == 200
         # login should fail with 401 (user no longer exists)

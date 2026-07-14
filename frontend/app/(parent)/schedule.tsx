@@ -57,8 +57,8 @@ export default function Schedule() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={{ padding: S.md, paddingBottom: S.xxxl }}>
-          <Text style={[T.h2, { fontSize: 24 }]}>Schedule Request</Text>
-          <Text style={[T.bodySm, { marginBottom: S.lg }]}>Request a custom pickup or schedule change</Text>
+          <Text style={[T.h2, { fontSize: 24 }]}>Route Change Request</Text>
+          <Text style={[T.bodySm, { marginBottom: S.lg }]}>Ask your concierge to review a temporary change to the assigned route</Text>
 
           <Text style={styles.label}>CHILD</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm, marginBottom: S.md }}>
@@ -90,11 +90,11 @@ export default function Schedule() {
           <Text style={styles.label}>WHEN (E.G. TUE 3:30 PM)</Text>
           <TextInput style={styles.input} value={when} onChangeText={setWhen} placeholder="Date and time" placeholderTextColor={C.textMuted} testID="schedule-when" />
 
-          <Text style={styles.label}>PICKUP ADDRESS</Text>
-          <TextInput style={styles.input} value={pickup} onChangeText={setPickup} placeholder="Optional" placeholderTextColor={C.textMuted} />
+          <Text style={styles.label}>TEMPORARY PICKUP ADDRESS</Text>
+          <TextInput style={styles.input} value={pickup} onChangeText={setPickup} placeholder="Only if changing the assigned pickup" placeholderTextColor={C.textMuted} />
 
-          <Text style={styles.label}>DROPOFF ADDRESS</Text>
-          <TextInput style={styles.input} value={dropoff} onChangeText={setDropoff} placeholder="Optional" placeholderTextColor={C.textMuted} />
+          <Text style={styles.label}>TEMPORARY DROPOFF ADDRESS</Text>
+          <TextInput style={styles.input} value={dropoff} onChangeText={setDropoff} placeholder="Only if changing the assigned dropoff" placeholderTextColor={C.textMuted} />
 
           <Text style={styles.label}>NOTES</Text>
           <TextInput style={[styles.input, { height: 70 }]} value={notes} onChangeText={setNotes} placeholder="Anything we should know?" placeholderTextColor={C.textMuted} multiline />

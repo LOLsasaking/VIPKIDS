@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Image,
+  View, Text, StyleSheet, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -16,21 +16,21 @@ export default function Operations() {
   const router = useRouter();
   const [ops, setOps] = useState<any | null>(null);
   const [history, setHistory] = useState<any[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [showHistory, setShowHistory] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const poll = useRef<any>(null);
 
   const load = useCallback(async () => {
     try {
-      const [o, h] = await Promise.all([Api.adminOpsToday(), Api.adminEvents({})]);
+      const [o, h] = await Promise.all([Api.adminOpsToday(), Api.adminActivity()]);
       setOps(o); setHistory(h);
     } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
   useEffect(() => {
     load();
-    poll.current = setInterval(() => Api.adminOpsToday().then(setOps).catch(() => {}), 8000);
+    poll.current = setInterval(load, 8000);
     return () => clearInterval(poll.current);
   }, [load]);
 
@@ -62,12 +62,7 @@ export default function Operations() {
           const color = row.status === 'picked_up' ? C.success : row.status === 'absent' ? C.danger : C.gold;
           return (
             <View key={row.child.id} style={styles.kidRow} testID={`ops-child-${row.child.id}`}>
-              {row.child.photo_url ? (
-                <Image source={{ uri: row.child.photo_url }} style={styles.av} />
-              ) : (
-                <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />
-              )}
-              <View style={{ flex: 1, marginLeft: S.sm }}>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.kidName}>{row.child.name}</Text>
                 <Text style={styles.kidSub}>
                   {row.driver?.name || 'No driver'} · {row.child.school}
@@ -89,22 +84,24 @@ export default function Operations() {
 
         <TouchableOpacity style={styles.toggleBtn} onPress={() => setShowHistory((v) => !v)} testID="ops-toggle-history">
           <History size={14} color={C.gold} />
-          <Text style={styles.toggleText}>{showHistory ? 'HIDE' : 'VIEW'} EVENTS HISTORY ({history.length})</Text>
+          <Text style={styles.toggleText}>{showHistory ? 'HIDE' : 'VIEW'} ACTIVITY TIMELINE ({history.length})</Text>
         </TouchableOpacity>
 
-        {showHistory && history.map((e: any) => (
-          <View key={e.id} style={styles.histRow}>
-            <View style={styles.histDot} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.histType}>{e.event_type.replace(/_/g, ' ').toUpperCase()}</Text>
-              <Text style={styles.histDetail}>
-                {e.child_name || '—'} · {e.driver_name || '—'}
-              </Text>
-              <Text style={styles.histTime}>{new Date(e.created_at).toLocaleString()}</Text>
-              {e.message ? <Text style={styles.histMsg}>{e.message}</Text> : null}
+        {showHistory && history.map((e: any) => {
+          const color = e.severity === 'critical' ? C.danger : e.severity === 'warning' ? C.gold : e.severity === 'success' ? C.success : C.info;
+          return (
+            <View key={e.id} style={[styles.histRow, e.severity === 'critical' && styles.histCritical]} testID={`activity-${e.id}`}>
+              <View style={[styles.histDot, { backgroundColor: color }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.histType, { color }]}>{e.title || e.type?.replace(/_/g, ' ').toUpperCase()}</Text>
+                <Text style={styles.histDetail}>{[e.child_name, e.driver_name].filter(Boolean).join(' · ') || 'VIP Operations'}</Text>
+                <Text style={styles.histTime}>{new Date(e.created_at).toLocaleString()}</Text>
+                {e.detail ? <Text style={styles.histMsg}>{e.detail}</Text> : null}
+                {e.lat && e.lng ? <Text style={[styles.histMsg, { color: C.danger }]}>LOCATION · {e.lat.toFixed(5)}, {e.lng.toFixed(5)}</Text> : null}
+              </View>
             </View>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
     </SafeAreaView>
   );
@@ -131,7 +128,6 @@ const styles = StyleSheet.create({
   statLab: { ...T.caption, fontSize: 9, color: C.textMuted },
   sectionLabel: { ...T.caption, color: C.textSecondary, marginBottom: S.sm },
   kidRow: { flexDirection: 'row', alignItems: 'center', padding: S.sm, backgroundColor: C.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginBottom: 8 },
-  av: { width: 44, height: 44, borderRadius: 22 },
   kidName: { ...T.body, fontSize: 14, fontFamily: Fonts.bodyMedium },
   kidSub: { ...T.bodySm, fontSize: 11 },
   kidEv: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 10, marginTop: 2, letterSpacing: 0.5 },
@@ -140,6 +136,7 @@ const styles = StyleSheet.create({
   toggleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: C.gold, marginTop: S.md, marginBottom: S.sm },
   toggleText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 11, letterSpacing: 1.5 },
   histRow: { flexDirection: 'row', gap: 8, paddingVertical: S.sm, borderBottomColor: C.border, borderBottomWidth: 1 },
+  histCritical: { marginTop: 6, padding: 11, backgroundColor: 'rgba(239,68,68,.1)', borderWidth: 1, borderColor: C.danger, borderRadius: 10 },
   histDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: C.gold, marginTop: 6 },
   histType: { ...T.body, fontSize: 12, fontFamily: Fonts.bodySemiBold, letterSpacing: 0.5 },
   histDetail: { ...T.bodySm, fontSize: 11 },

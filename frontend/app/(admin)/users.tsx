@@ -1,18 +1,18 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, ActivityIndicator, Image, TouchableOpacity, Alert,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput, KeyboardAvoidingView, Platform, Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Trash2, Check, X, Plus, Link2, UserCheck, Camera, PauseCircle, PlayCircle, Edit3, Car, MapPinned } from 'lucide-react-native';
+import { Trash2, X, Plus, Link2, UserCheck, Camera, PauseCircle, PlayCircle, Edit3, Car, MapPinned } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import { pickPhoto } from '@/src/photoPicker';
 import { C, S, T, Fonts } from '@/src/theme';
 
-type Tab = 'pending' | 'children' | 'parents' | 'drivers' | 'vehicles' | 'routes';
+type Tab = 'children' | 'parents' | 'drivers' | 'vehicles' | 'routes';
 
 export default function AdminUsers() {
-  const [tab, setTab] = useState<Tab>('pending');
+  const [tab, setTab] = useState<Tab>('children');
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddChild, setShowAddChild] = useState(false);
@@ -31,7 +31,6 @@ export default function AdminUsers() {
     setLoading(true);
     try {
       if (tab === 'children') setData(await Api.adminChildren());
-      else if (tab === 'pending') setData(await Api.adminPending());
       else if (tab === 'vehicles') setData(await Api.adminVehicles());
       else if (tab === 'routes') setData(await Api.adminListRoutes());
       else setData(await Api.adminUsers(tab === 'parents' ? 'parent' : 'driver'));
@@ -39,10 +38,16 @@ export default function AdminUsers() {
   }, [tab]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
+  const loadOptions = useCallback(() => {
     Promise.all([Api.adminUsers('parent'), Api.adminUsers('driver'), Api.adminVehicles(), Api.adminChildren()])
-      .then(([p, d, v, c]) => { setParents(p); setDrivers(d); setVehicles(v); setAllChildren(c); }).catch(() => {});
+      .then(([p, d, v, c]) => {
+        setParents(p.filter((item: any) => item.status === 'approved' || item.status === 'active'));
+        setDrivers(d.filter((item: any) => item.status === 'active'));
+        setVehicles(v);
+        setAllChildren(c);
+      }).catch(() => {});
   }, []);
+  useEffect(() => { loadOptions(); }, [loadOptions]);
 
   const remove = (id: string, label: string) => {
     Alert.alert('Remove', `Remove ${label}?`, [
@@ -54,17 +59,6 @@ export default function AdminUsers() {
         else await Api.adminDeleteUser(id);
         load();
       }},
-    ]);
-  };
-
-  const approve = async (uid: string) => {
-    try { await Api.adminApprove(uid); await load(); Alert.alert('Approved', 'User can now be assigned (parents) or log in (drivers).'); }
-    catch (e: any) { Alert.alert('Error', e.message); }
-  };
-  const reject = async (uid: string) => {
-    Alert.alert('Reject', 'Reject and delete this account?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Reject', style: 'destructive', onPress: async () => { await Api.adminReject(uid); await load(); }},
     ]);
   };
 
@@ -88,11 +82,19 @@ export default function AdminUsers() {
     } catch (e: any) { Alert.alert('Error', e.message); }
   };
 
-  const changeChildPhoto = async (cid: string) => {
-    const photo = await pickPhoto();
-    if (!photo) return;
-    try { await Api.adminChildPhoto(cid, photo); await load(); }
-    catch (e: any) { Alert.alert('Error', e.message); }
+  const reviewRequest = async (u: any, approve: boolean) => {
+    try {
+      if (approve) {
+        await Api.adminApprove(u.id);
+        Alert.alert('Approved', u.role === 'parent'
+          ? 'Now add the child and assign a driver and vehicle before activating parent access.'
+          : 'The driver can now sign in.');
+      } else {
+        await Api.adminReject(u.id);
+      }
+      await load();
+      await loadOptions();
+    } catch (e: any) { Alert.alert('Unable to review request', e.message); }
   };
 
   return (
@@ -120,7 +122,7 @@ export default function AdminUsers() {
           )}
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: S.sm }}>
-          {(['pending', 'children', 'parents', 'drivers', 'vehicles', 'routes'] as Tab[]).map((t) => (
+          {(['children', 'parents', 'drivers', 'vehicles', 'routes'] as Tab[]).map((t) => (
             <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && styles.tabActive]} testID={`admin-tab-${t}`}>
               <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t.toUpperCase()}</Text>
             </TouchableOpacity>
@@ -174,20 +176,20 @@ export default function AdminUsers() {
 
           {(tab !== 'vehicles' && tab !== 'routes') && data.map((u: any) => (
             <View key={u.id} style={styles.row}>
-              {tab === 'children' ? (
-                <TouchableOpacity onPress={() => changeChildPhoto(u.id)} testID={`change-photo-child-${u.id}`}>
-                  {u.photo_url ? <Image source={{ uri: u.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />}
-                  <View style={styles.camPip}><Camera size={10} color={C.bg} /></View>
-                </TouchableOpacity>
-              ) : (
+              {tab !== 'children' && (
                 u.photo_url ? <Image source={{ uri: u.photo_url }} style={styles.av} /> : <View style={[styles.av, { backgroundColor: C.bgTertiary }]} />
               )}
-              <View style={{ flex: 1, marginLeft: S.sm }}>
+              <View style={{ flex: 1, marginLeft: tab === 'children' ? 0 : S.sm }}>
                 <Text style={styles.name}>{u.name}</Text>
                 {tab === 'children' && (
-                  <Text style={styles.sub}>
-                    {u.school} · {u.driver?.name || 'No driver'} · {u.vehicle?.make || 'No vehicle'}
-                  </Text>
+                  <>
+                    <Text style={styles.sub}>
+                      {u.school} · {u.driver?.name || 'No driver'} · {u.vehicle?.make || 'No vehicle'}
+                    </Text>
+                    <Text style={[styles.sub, { color: u.child_account?.status === 'active' ? C.success : C.textMuted }]}>
+                      {u.child_account ? `Child login · ${u.child_account.email} · ${u.child_account.status.toUpperCase()}` : 'Child login not created'}
+                    </Text>
+                  </>
                 )}
                 {tab !== 'children' && (
                   <Text style={styles.sub}>
@@ -199,17 +201,6 @@ export default function AdminUsers() {
               </View>
 
               {/* Actions */}
-              {tab === 'pending' && (
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  <TouchableOpacity onPress={() => approve(u.id)} style={styles.approveBtn} testID={`approve-${u.id}`}>
-                    <Check size={14} color={C.success} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => reject(u.id)} style={styles.rejectBtn} testID={`reject-${u.id}`}>
-                    <X size={14} color={C.danger} />
-                  </TouchableOpacity>
-                </View>
-              )}
-
               {tab === 'children' && (
                 <View style={{ flexDirection: 'row', gap: 6 }}>
                   <TouchableOpacity onPress={() => setEditChild(u)} style={styles.assignBtn} testID={`edit-child-${u.id}`}>
@@ -231,7 +222,18 @@ export default function AdminUsers() {
                 </TouchableOpacity>
               )}
 
-              {(tab === 'parents' || tab === 'drivers') && (
+              {(tab === 'parents' || tab === 'drivers') && u.status === 'pending' && (
+                <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => reviewRequest(u, true)} testID={`approve-${u.id}`} style={styles.approveBtn} accessibilityLabel={`Approve ${u.name}`}>
+                    <UserCheck size={14} color={C.success} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => reviewRequest(u, false)} testID={`reject-${u.id}`} style={styles.rejectBtn} accessibilityLabel={`Reject ${u.name}`}>
+                    <X size={14} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {(tab === 'parents' || tab === 'drivers') && u.status !== 'pending' && (
                 <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
                   <TouchableOpacity onPress={() => toggleSuspend(u)} testID={`suspend-${u.id}`} style={{ padding: 8 }}>
                     {u.status === 'suspended'
@@ -249,15 +251,16 @@ export default function AdminUsers() {
         </ScrollView>
       )}
 
-      <AddChildModal visible={showAddChild || !!editChild} initial={editChild} onClose={() => { setShowAddChild(false); setEditChild(null); }} parents={parents} onCreated={load} />
-      <AssignModal child={assignFor} onClose={() => setAssignFor(null)} drivers={drivers} vehicles={vehicles} onAssigned={load} />
-      <VehicleModal visible={showAddVehicle || !!editVehicle} initial={editVehicle} onClose={() => { setShowAddVehicle(false); setEditVehicle(null); }} onSaved={load} />
-      <RouteModal visible={showAddRoute || !!editRoute} initial={editRoute} onClose={() => { setShowAddRoute(false); setEditRoute(null); }} drivers={drivers} vehicles={vehicles} children={allChildren} onSaved={load} />
+      <AddChildModal visible={showAddChild || !!editChild} initial={editChild} onClose={() => { setShowAddChild(false); setEditChild(null); }} parents={parents} onCreated={() => { load(); loadOptions(); }} />
+      <AssignModal child={assignFor} onClose={() => setAssignFor(null)} drivers={drivers} vehicles={vehicles} onAssigned={() => { load(); loadOptions(); }} />
+      <VehicleModal visible={showAddVehicle || !!editVehicle} initial={editVehicle} drivers={drivers} onClose={() => { setShowAddVehicle(false); setEditVehicle(null); }} onSaved={() => { load(); loadOptions(); }} />
+      <RouteModal visible={showAddRoute || !!editRoute} initial={editRoute} onClose={() => { setShowAddRoute(false); setEditRoute(null); }} drivers={drivers} vehicles={vehicles} children={allChildren} onSaved={() => { load(); loadOptions(); }} />
     </SafeAreaView>
   );
 }
 
-function AddChildModal({ visible, onClose, parents, onCreated }: any) {
+function AddChildModal({ visible, initial, onClose, parents, onCreated }: any) {
+  const isEdit = !!initial;
   const [name, setName] = useState('');
   const [school, setSchool] = useState('');
   const [pickup, setPickup] = useState('07:30');
@@ -265,31 +268,64 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
   const [home, setHome] = useState('');
   const [schoolAddr, setSchoolAddr] = useState('');
   const [parentId, setParentId] = useState('');
-  const [photo, setPhoto] = useState<string | null>(null);
   const [birthDate, setBirthDate] = useState('');
   const [grade, setGrade] = useState('');
   const [roundTrip, setRoundTrip] = useState(true);
   const [emergencyName, setEmergencyName] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
+  const [childEmail, setChildEmail] = useState('');
+  const [childPassword, setChildPassword] = useState('');
+  const [guardianConsent, setGuardianConsent] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const pick = async () => { const p = await pickPhoto(); if (p) setPhoto(p); };
+  useEffect(() => {
+    if (initial) {
+      setName(initial.name || ''); setSchool(initial.school || '');
+      setPickup(initial.pickup_time || '07:30'); setDropoff(initial.dropoff_time || '15:30');
+      setHome(initial.home_address || ''); setSchoolAddr(initial.school_address || '');
+      setParentId(initial.parent_id || '');
+      setBirthDate(initial.birth_date || ''); setGrade(initial.grade || '');
+      setRoundTrip(initial.round_trip ?? true); setEmergencyName(initial.emergency_contact_name || '');
+      setEmergencyPhone(initial.emergency_contact_phone || ''); setContactPhone(initial.contact_phone || '');
+      setChildEmail(initial.child_account?.email || ''); setChildPassword('');
+      setGuardianConsent(!!initial.child_account?.guardian_consent_confirmed_at);
+    } else if (visible) {
+      setChildEmail(''); setChildPassword(''); setGuardianConsent(false);
+    }
+  }, [initial, visible]);
 
   const submit = async () => {
     if (!name || !school || !parentId) return Alert.alert('Missing', 'Name, school and parent are required.');
+    if (childEmail && !isEdit && !childPassword) return Alert.alert('Missing', 'Enter a temporary password for the child login.');
+    if (childPassword && !childEmail) return Alert.alert('Missing', 'Enter the child login email.');
+    if (childEmail && !guardianConsent) return Alert.alert('Authorization required', 'Confirm parent or guardian authorization before creating child access.');
     setBusy(true);
     try {
-      await Api.adminCreateChild({
-        name, photo_url: photo || undefined, parent_id: parentId,
+      const payload = {
+        name, parent_id: parentId,
         school, pickup_time: pickup, dropoff_time: dropoff,
         home_address: home, school_address: schoolAddr,
         birth_date: birthDate || undefined, grade: grade || undefined,
         round_trip: roundTrip,
         emergency_contact_name: emergencyName || undefined,
         emergency_contact_phone: emergencyPhone || undefined,
-      });
-      setName(''); setSchool(''); setHome(''); setSchoolAddr(''); setPhoto(null); setParentId('');
-      setBirthDate(''); setGrade(''); setEmergencyName(''); setEmergencyPhone(''); setRoundTrip(true);
+        contact_phone: contactPhone || undefined,
+      };
+      const saved: any = isEdit
+        ? await Api.adminUpdateChild(initial.id, payload)
+        : await Api.adminCreateChild(payload);
+      if (childEmail) {
+        await Api.adminSetChildAccess(saved.id || initial.id, {
+          email: childEmail.trim(),
+          password: childPassword || undefined,
+          enabled: true,
+          guardian_consent_confirmed: guardianConsent,
+        });
+      }
+      setName(''); setSchool(''); setHome(''); setSchoolAddr(''); setParentId('');
+      setBirthDate(''); setGrade(''); setEmergencyName(''); setEmergencyPhone(''); setContactPhone(''); setRoundTrip(true);
+      setChildEmail(''); setChildPassword(''); setGuardianConsent(false);
       onClose(); onCreated();
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setBusy(false); }
@@ -304,11 +340,6 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
             <TouchableOpacity onPress={onClose} testID="add-child-close"><X size={20} color={C.textMuted} /></TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={{ paddingBottom: S.lg }}>
-            <TouchableOpacity onPress={pick} style={styles.photoSlot} testID="add-child-photo">
-              {photo ? <Image source={{ uri: photo }} style={styles.photoSlotImg} /> : <Camera size={26} color={C.gold} />}
-              <Text style={styles.photoSlotText}>{photo ? 'CHANGE PHOTO' : 'ADD PHOTO (OPTIONAL)'}</Text>
-            </TouchableOpacity>
-
             <Text style={styles.lab}>NAME</Text>
             <TextInput style={styles.inp} value={name} onChangeText={setName} placeholderTextColor={C.textMuted} testID="child-name" />
             <Text style={styles.lab}>PARENT</Text>
@@ -364,6 +395,55 @@ function AddChildModal({ visible, onClose, parents, onCreated }: any) {
 
             <Text style={styles.lab}>CHILD CONTACT PHONE (OPTIONAL)</Text>
             <TextInput style={styles.inp} value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" placeholderTextColor={C.textMuted} />
+
+            <View style={{ marginTop: S.md, paddingTop: S.sm, borderTopWidth: 1, borderTopColor: C.border }}>
+              <Text style={[T.h3, { fontSize: 17 }]}>Child sign-in</Text>
+              <Text style={[T.bodySm, { marginTop: 4 }]}>Optional restricted login for this child only. Children cannot create or approve accounts.</Text>
+            </View>
+            <Text style={styles.lab}>CHILD LOGIN EMAIL (OPTIONAL)</Text>
+            <TextInput
+              style={styles.inp}
+              value={childEmail}
+              onChangeText={setChildEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="child@example.com"
+              placeholderTextColor={C.textMuted}
+            />
+            <Text style={styles.lab}>{isEdit && initial?.child_account ? 'NEW PASSWORD (LEAVE BLANK TO KEEP CURRENT)' : 'TEMPORARY PASSWORD'}</Text>
+            <TextInput
+              style={styles.inp}
+              value={childPassword}
+              onChangeText={setChildPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              placeholder={isEdit && initial?.child_account ? 'Keep current password' : 'At least 8 characters'}
+              placeholderTextColor={C.textMuted}
+            />
+            <TouchableOpacity
+              style={[styles.chip, guardianConsent && styles.chipActive, { marginTop: S.sm, minHeight: 48 }]}
+              onPress={() => setGuardianConsent((value) => !value)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: guardianConsent }}
+            >
+              <Text style={[styles.chipText, guardianConsent && { color: C.gold }]}>
+                {guardianConsent ? '✓ ' : ''}PARENT OR GUARDIAN AUTHORIZED THIS CHILD LOGIN
+              </Text>
+            </TouchableOpacity>
+            {isEdit && initial?.child_account && (
+              <TouchableOpacity
+                style={[styles.primaryBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: C.danger }]}
+                onPress={() => Alert.alert('Remove child sign-in', 'The transportation record stays. Only this child login will be removed.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Remove login', style: 'destructive', onPress: async () => {
+                    try { await Api.adminDeleteChildAccess(initial.id); onClose(); onCreated(); }
+                    catch (e: any) { Alert.alert('Error', e.message); }
+                  } },
+                ])}
+              >
+                <Text style={[styles.primaryBtnText, { color: C.danger }]}>REMOVE CHILD SIGN-IN</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={styles.primaryBtn} onPress={submit} disabled={busy} testID="add-child-submit">
               {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryBtnText}>{isEdit ? 'SAVE CHANGES' : 'CREATE CHILD'}</Text>}
@@ -423,7 +503,7 @@ function AssignModal({ child, onClose, drivers, vehicles, onAssigned }: any) {
   );
 }
 
-function VehicleModal({ visible, initial, onClose, onSaved }: any) {
+function VehicleModal({ visible, initial, drivers, onClose, onSaved }: any) {
   const isEdit = !!initial;
   const [make, setMake] = useState('');
   const [model, setModel] = useState('');
@@ -431,6 +511,8 @@ function VehicleModal({ visible, initial, onClose, onSaved }: any) {
   const [color, setColor] = useState('');
   const [year, setYear] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
+  const [driverId, setDriverId] = useState('');
+  const [regDate, setRegDate] = useState('');
   const [reg, setReg] = useState('');
   const [ins, setIns] = useState('');
   const [insp, setInsp] = useState('');
@@ -441,11 +523,12 @@ function VehicleModal({ visible, initial, onClose, onSaved }: any) {
       setMake(initial.make || ''); setModel(initial.model || ''); setPlate(initial.plate || '');
       setColor(initial.color || ''); setYear(initial.year ? String(initial.year) : '');
       setPhoto(initial.photo_url || null);
+      setDriverId(initial.driver_id || ''); setRegDate(initial.registration_date || '');
       setReg(initial.registration_expiry || ''); setIns(initial.insurance_expiry || '');
       setInsp(initial.inspection_expiry || '');
     } else if (visible) {
       setMake(''); setModel(''); setPlate(''); setColor(''); setYear(''); setPhoto(null);
-      setReg(''); setIns(''); setInsp('');
+      setDriverId(''); setRegDate(''); setReg(''); setIns(''); setInsp('');
     }
   }, [initial, visible]);
 
@@ -459,6 +542,8 @@ function VehicleModal({ visible, initial, onClose, onSaved }: any) {
         make, model, plate, color: color || '—',
         year: year ? parseInt(year) : undefined,
         photo_url: photo || undefined,
+        driver_id: driverId || undefined,
+        registration_date: regDate || undefined,
         registration_expiry: reg || undefined,
         insurance_expiry: ins || undefined,
         inspection_expiry: insp || undefined,
@@ -505,6 +590,16 @@ function VehicleModal({ visible, initial, onClose, onSaved }: any) {
                 <TextInput style={styles.inp} value={color} onChangeText={setColor} placeholderTextColor={C.textMuted} />
               </View>
             </View>
+            <Text style={styles.lab}>ASSIGNED DRIVER</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 4 }}>
+              {drivers.map((driver: any) => (
+                <TouchableOpacity key={driver.id} onPress={() => setDriverId(driver.id)} style={[styles.chip, driverId === driver.id && styles.chipActive]}>
+                  <Text style={[styles.chipText, driverId === driver.id && { color: C.gold }]}>{driver.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={styles.lab}>REGISTRATION DATE (YYYY-MM-DD)</Text>
+            <TextInput style={styles.inp} value={regDate} onChangeText={setRegDate} placeholder="2026-01-01" placeholderTextColor={C.textMuted} />
             <Text style={styles.lab}>REGISTRATION EXPIRY (YYYY-MM-DD)</Text>
             <TextInput style={styles.inp} value={reg} onChangeText={setReg} placeholder="2026-12-31" placeholderTextColor={C.textMuted} />
             <Text style={styles.lab}>INSURANCE EXPIRY</Text>
@@ -620,7 +715,6 @@ const styles = StyleSheet.create({
   tabTextActive: { color: C.gold },
   row: { flexDirection: 'row', alignItems: 'center', padding: S.sm, backgroundColor: C.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: C.border, marginBottom: 8 },
   av: { width: 44, height: 44, borderRadius: 22 },
-  camPip: { position: 'absolute', bottom: -2, right: -2, backgroundColor: C.gold, width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.bgSecondary },
   name: { ...T.body, fontSize: 14, fontFamily: Fonts.bodyMedium },
   sub: { ...T.bodySm, fontSize: 11 },
   approveBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.success },
@@ -641,4 +735,6 @@ const styles = StyleSheet.create({
   photoSlot: { alignItems: 'center', justifyContent: 'center', padding: S.md, borderRadius: 14, borderWidth: 1, borderColor: C.borderLight, borderStyle: 'dashed', marginBottom: S.sm, gap: 6 },
   photoSlotImg: { width: 80, height: 80, borderRadius: 40 },
   photoSlotText: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 10, letterSpacing: 1 },
+  kidPick: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 9, borderWidth: 1, borderColor: C.border, marginBottom: 6 },
+  kidPickActive: { borderColor: C.gold, backgroundColor: C.bgTertiary },
 });

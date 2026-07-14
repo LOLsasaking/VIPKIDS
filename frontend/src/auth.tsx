@@ -4,12 +4,14 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { storage } from '@/src/utils/storage';
 import { Api, TOKEN_KEY } from './api';
+import { clearQueuedCheckins } from './offlineCheckins';
 
 type User = {
   id: string;
   email: string;
   name: string;
-  role: 'parent' | 'driver' | 'admin';
+  role: 'parent' | 'driver' | 'child' | 'admin';
+  child_id?: string;
   phone?: string;
   photo_url?: string;
   notif_prefs?: any;
@@ -19,7 +21,6 @@ type AuthCtx = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  register: (data: any) => Promise<User>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -55,14 +56,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res.user as User;
   };
 
-  const register = async (data: any) => {
-    const res = await Api.register(data);
-    await storage.secureSet(TOKEN_KEY, res.access_token);
-    setUser(res.user);
-    return res.user as User;
-  };
-
   const logout = async () => {
+    await clearQueuedCheckins();
     await storage.secureRemove(TOKEN_KEY);
     setUser(null);
   };
@@ -77,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, loading, login, register, logout, refresh }}>
+    <Ctx.Provider value={{ user, loading, login, logout, refresh }}>
       {children}
     </Ctx.Provider>
   );

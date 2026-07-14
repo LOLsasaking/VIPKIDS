@@ -2,10 +2,11 @@
  * Splash/router — redirects based on auth + role.
  */
 import { useEffect } from 'react';
-import { View, ActivityIndicator, StyleSheet, Image, Text } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/auth';
-import { C, T, Fonts } from '@/src/theme';
+import { C } from '@/src/theme';
+import BrandLogo from '@/src/components/BrandLogo';
 
 export default function Index() {
   const { user, loading } = useAuth();
@@ -19,6 +20,8 @@ export default function Index() {
       router.replace('/(parent)');
     } else if (user.role === 'driver') {
       router.replace('/(driver)');
+    } else if (user.role === 'child') {
+      router.replace('/(child)');
     } else if (user.role === 'admin') {
       router.replace('/(admin)');
     }
@@ -26,10 +29,7 @@ export default function Index() {
 
   return (
     <View style={styles.container} testID="splash-screen">
-      <Text style={[T.h1, { color: C.gold, letterSpacing: 3 }]}>VIP KIDS</Text>
-      <Text style={[T.caption, { marginTop: 8, color: C.textSecondary }]}>
-        Private School Chauffeur
-      </Text>
+      <BrandLogo width={176} />
       <ActivityIndicator color={C.gold} style={{ marginTop: 32 }} />
     </View>
   );

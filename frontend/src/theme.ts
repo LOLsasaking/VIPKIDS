@@ -1,6 +1,4 @@
-/**
- * Design tokens for VIP KIDS TRANSPORTATION — premium dark luxury theme.
- */
+/** Design tokens for VIP KIDS TRANSPORTATION — premium black and gold. */
 export const C = {
   bg: '#09090B',
   bgSecondary: '#18181B',
@@ -12,10 +10,15 @@ export const C = {
   gold: '#D4AF37',
   goldMuted: '#B5952F',
   accent: '#E5E4E2',
+  accentStrong: '#D4AF37',
+  info: '#276EF1',
   danger: '#EF4444',
   success: '#10B981',
+  warning: '#F59E0B',
   border: '#27272A',
   borderLight: '#3F3F46',
+  mapLand: '#121214',
+  mapRoad: '#27272A',
 };
 
 export const S = {

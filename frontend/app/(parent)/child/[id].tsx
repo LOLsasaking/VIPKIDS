@@ -16,8 +16,18 @@ export default function ChildDetail() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!params.id) return;
-    Api.parentChildDetail(params.id).then((c) => { setChild(c); setLoading(false); }).catch(() => setLoading(false));
+    const id = Array.isArray(params.id) ? params.id[0] : params.id;
+    if (!id) {
+      setLoading(false);
+      return;
+    }
+    Api.parentChildDetail(id)
+      .catch(async () => {
+        const children = await Api.parentChildren();
+        return children.find((item) => item.id === id) || null;
+      })
+      .then(setChild)
+      .finally(() => setLoading(false));
   }, [params.id]);
 
   if (loading) return <SafeAreaView style={styles.loader}><ActivityIndicator color={C.gold} /></SafeAreaView>;
@@ -32,11 +42,6 @@ export default function ChildDetail() {
         </TouchableOpacity>
 
         <View style={styles.heroCard}>
-          {child.photo_url ? (
-            <Image source={{ uri: child.photo_url }} style={styles.photo} />
-          ) : (
-            <View style={[styles.photo, { backgroundColor: C.bgTertiary }]} />
-          )}
           <Text style={styles.name}>{child.name}</Text>
           {child.grade ? <Text style={styles.gradeBadge}>{child.grade}</Text> : null}
           <Text style={styles.readonlyHint}>READ-ONLY · CONTACT ADMIN TO EDIT</Text>
@@ -110,7 +115,6 @@ const styles = StyleSheet.create({
   back: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: S.md },
   backText: { color: C.gold, fontFamily: Fonts.bodyMedium, letterSpacing: 1.5, fontSize: 11 },
   heroCard: { alignItems: 'center', padding: S.lg, backgroundColor: C.bgSecondary, borderRadius: 18, borderWidth: 1, borderColor: C.border },
-  photo: { width: 110, height: 110, borderRadius: 55, borderWidth: 2, borderColor: C.gold, marginBottom: S.sm },
   name: { ...T.h2, fontSize: 26 },
   gradeBadge: { color: C.gold, fontFamily: Fonts.bodyMedium, fontSize: 12, letterSpacing: 1.5, marginTop: 4 },
   readonlyHint: { ...T.caption, color: C.textMuted, marginTop: S.sm },

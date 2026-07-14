@@ -1,20 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch, Alert, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LogOut, Bell, Mail, Phone, Camera } from 'lucide-react-native';
+import { LogOut, Bell, Mail, Phone, Camera, FileText } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import { Api } from '@/src/api';
 import { pickPhoto } from '@/src/photoPicker';
+import AccountDeletionSection from '@/src/components/AccountDeletionSection';
 import { C, S, T, Fonts } from '@/src/theme';
 
 const PREF_LIST: { key: string; label: string }[] = [
   { key: 'on_the_way', label: 'Driver is on the way' },
+  { key: 'approaching', label: 'Driver approaching pickup' },
   { key: 'picked_up', label: 'Child picked up' },
   { key: 'arrived_school', label: 'Arrived at school' },
   { key: 'leaving_school', label: 'Leaving school' },
   { key: 'arriving_home', label: 'Arriving home' },
+  { key: 'arrived_home', label: 'Dropped off at home' },
   { key: 'delay', label: 'Traffic delays' },
+  { key: 'no_show', label: 'Child marked absent' },
   { key: 'announcements', label: 'Announcements' },
 ];
 
@@ -108,6 +112,14 @@ export default function Profile() {
           <LogOut size={16} color={C.danger} strokeWidth={1.8} />
           <Text style={styles.logoutText}>SIGN OUT</Text>
         </TouchableOpacity>
+        <Pressable style={styles.privacyLink} onPress={() => router.push('/privacy')} accessibilityRole="link">
+          <FileText size={15} color={C.gold} />
+          <Text style={styles.privacyText}>PRIVACY & DATA USE</Text>
+        </Pressable>
+        <AccountDeletionSection
+          email={user.email}
+          onDeleted={async () => { await logout(); router.replace('/login'); }}
+        />
       </ScrollView>
     </SafeAreaView>
   );
@@ -130,4 +142,6 @@ const styles = StyleSheet.create({
   rowLabel: { ...T.body, fontSize: 14 },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: S.lg, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: C.danger },
   logoutText: { color: C.danger, fontFamily: Fonts.bodySemiBold, letterSpacing: 2, fontSize: 13 },
+  privacyLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: S.md, minHeight: 42 },
+  privacyText: { color: C.gold, fontFamily: Fonts.bodySemiBold, letterSpacing: 1.1, fontSize: 10 },
 });

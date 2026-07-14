@@ -1,0 +1,10 @@
+# Store production values in the hosting provider's secret manager.
+MONGO_URL=mongodb+srv://user:password@cluster.example.com/vipkids?tls=true
+DB_NAME=vipkids_production
+JWT_SECRET=replace-with-at-least-32-random-bytes
+JWT_TTL_HOURS=12
+ENVIRONMENT=production
+GPS_RETENTION_DAYS=30
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=replace-with-a-unique-strong-password
+ALLOWED_ORIGINS=https://app.example.com

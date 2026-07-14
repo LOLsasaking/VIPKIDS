@@ -2,30 +2,70 @@
 Premium school chauffeur app with JWT auth (parent/driver/admin), live GPS, chat,
 check-in/out events, schedule requests, announcements.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Literal
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from jose import jwt, JWTError
+import jwt
+from jwt import InvalidTokenError
 import bcrypt
 import os
 import uuid
 import logging
+import hashlib
 
 ROOT = Path(__file__).parent
-load_dotenv(ROOT / ".env")
+
+def load_local_env(path: Path):
+    """Load simple KEY=VALUE development settings without interpolation or execution."""
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key and key.replace("_", "").isalnum():
+            os.environ.setdefault(key, value.strip())
+
+load_local_env(ROOT / ".env")
 
 # ---------- Config ----------
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-JWT_SECRET = os.environ.get("JWT_SECRET", "vip-kids-secret-change-me-prod")
+JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGO = "HS256"
-JWT_TTL_DAYS = 30
+JWT_TTL_HOURS = int(os.environ.get("JWT_TTL_HOURS", "12"))
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").strip().lower()
+GPS_RETENTION_DAYS = int(os.environ.get("GPS_RETENTION_DAYS", "30"))
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "gonxander@gmail.com").strip().lower()
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://localhost:8081,http://127.0.0.1:8081",
+    ).split(",")
+    if origin.strip()
+]
+
+if ENVIRONMENT == "production":
+    config_errors = []
+    if len(JWT_SECRET) < 32:
+        config_errors.append("JWT_SECRET must contain at least 32 characters")
+    if len(ADMIN_PASSWORD) < 12:
+        config_errors.append("ADMIN_PASSWORD must contain at least 12 characters")
+    if not MONGO_URL.startswith(("mongodb+srv://", "mongodb://")):
+        config_errors.append("MONGO_URL must use a MongoDB connection string")
+    if any(origin.startswith("http://") or "localhost" in origin or "127.0.0.1" in origin for origin in ALLOWED_ORIGINS):
+        config_errors.append("ALLOWED_ORIGINS must contain only production HTTPS origins")
+    if config_errors:
+        raise RuntimeError("Invalid production configuration: " + "; ".join(config_errors))
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -39,6 +79,19 @@ log = logging.getLogger("vipkids")
 # ---------- Helpers ----------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+def fresh_location(location: Optional[dict], max_age_seconds: int = 20) -> Optional[dict]:
+    if not location:
+        return None
+    try:
+        updated_at = datetime.fromisoformat(location["updated_at"])
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        if (now_utc() - updated_at).total_seconds() > max_age_seconds:
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return location
 
 def new_id() -> str:
     return str(uuid.uuid4())
@@ -57,15 +110,47 @@ def make_token(user_id: str, role: str) -> str:
         "sub": user_id,
         "role": role,
         "iat": now_utc(),
-        "exp": now_utc() + timedelta(days=JWT_TTL_DAYS),
+        "exp": now_utc() + timedelta(hours=JWT_TTL_HOURS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 def decode_token(token: str) -> Optional[dict]:
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-    except JWTError:
+    except InvalidTokenError:
         return None
+
+async def enforce_rate_limit(bucket: str, subject: str, limit: int, window_seconds: int):
+    now = now_utc()
+    key = hashlib.sha256(f"{bucket}:{subject}".encode()).hexdigest()
+    record = await db.auth_rate_limits.find_one({"id": key})
+    expires_at = record.get("expires_at") if record else None
+    if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if record and isinstance(expires_at, datetime) and expires_at > now:
+        if record.get("count", 0) >= limit:
+            raise HTTPException(429, "Too many attempts. Please try again later.")
+        await db.auth_rate_limits.update_one({"id": key}, {"$inc": {"count": 1}})
+        return key
+    await db.auth_rate_limits.replace_one(
+        {"id": key},
+        {"id": key, "count": 1, "expires_at": now + timedelta(seconds=window_seconds)},
+        upsert=True,
+    )
+    return key
+
+async def refresh_development_demo_locations():
+    """Keep local demo vehicles visible while testers click around the app."""
+    if ENVIRONMENT == "production":
+        return
+    now = now_utc()
+    await db.driver_locations.update_many(
+        {"id": {"$regex": "^demo-location-"}},
+        {"$set": {
+            "updated_at": now.isoformat(),
+            "expires_at": now + timedelta(minutes=30),
+        }},
+    )
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -78,6 +163,8 @@ async def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) ->
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(401, "User not found")
+    if user.get("status") in ("pending", "suspended"):
+        raise HTTPException(403, "Account is not active")
     return user
 
 def require_role(*roles: str):
@@ -87,21 +174,38 @@ def require_role(*roles: str):
         return user
     return checker
 
-# ---------- Models ----------
-Role = Literal["parent", "driver", "admin"]
+def public_contact_user(user: Optional[dict]) -> Optional[dict]:
+    """Return only fields needed by an assigned family/driver contact."""
+    if not user:
+        return None
+    allowed = ("id", "name", "role", "phone", "photo_url", "license_number")
+    return {key: user.get(key) for key in allowed if user.get(key) is not None}
 
-class RegisterIn(BaseModel):
+def restricted_child_view(child: dict) -> dict:
+    """Return only the child's own ride details needed in the restricted child app."""
+    allowed = (
+        "id", "name", "school", "pickup_time", "dropoff_time", "grade", "round_trip",
+        "emergency_contact_name", "emergency_contact_phone",
+    )
+    return {key: child.get(key) for key in allowed if child.get(key) is not None}
+
+# ---------- Models ----------
+class AccessRequestIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    name: str
-    role: Role
-    phone: Optional[str] = None
-    photo_url: Optional[str] = None
-    address: Optional[str] = None  # for parents
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=2, max_length=100)
+    role: Literal["parent", "driver"]
+    phone: Optional[str] = Field(default=None, max_length=30)
+    address: Optional[str] = Field(default=None, max_length=300)
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+class DeleteAccountIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    confirmation: Literal["DELETE"]
 
 class TokenOut(BaseModel):
     access_token: str
@@ -110,7 +214,6 @@ class TokenOut(BaseModel):
 
 class ChildIn(BaseModel):
     name: str
-    photo_url: Optional[str] = None
     parent_id: str
     driver_id: Optional[str] = None
     vehicle_id: Optional[str] = None
@@ -126,6 +229,28 @@ class ChildIn(BaseModel):
     emergency_contact_phone: Optional[str] = None
     contact_phone: Optional[str] = None  # child's own contact if applicable
 
+class ParentChildIn(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    child_email: EmailStr
+    child_password: str = Field(min_length=8, max_length=128)
+    school: str = Field(min_length=2, max_length=160)
+    pickup_time: str = Field(min_length=3, max_length=20)
+    dropoff_time: str = Field(min_length=3, max_length=20)
+    home_address: str = Field(min_length=4, max_length=300)
+    school_address: str = Field(min_length=4, max_length=300)
+    birth_date: Optional[str] = Field(default=None, max_length=20)
+    grade: Optional[str] = Field(default=None, max_length=40)
+    round_trip: bool = True
+    emergency_contact_name: Optional[str] = Field(default=None, max_length=100)
+    emergency_contact_phone: Optional[str] = Field(default=None, max_length=30)
+    contact_phone: Optional[str] = Field(default=None, max_length=30)
+
+class ChildAccessIn(BaseModel):
+    email: EmailStr
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    enabled: bool = True
+    guardian_consent_confirmed: bool
+
 class VehicleIn(BaseModel):
     make: str
     model: str
@@ -133,6 +258,8 @@ class VehicleIn(BaseModel):
     color: str
     year: Optional[int] = None
     photo_url: Optional[str] = None
+    driver_id: Optional[str] = None
+    registration_date: Optional[str] = None  # YYYY-MM-DD
     registration_expiry: Optional[str] = None  # YYYY-MM-DD
     insurance_expiry: Optional[str] = None
     inspection_expiry: Optional[str] = None
@@ -147,18 +274,42 @@ class RouteIn(BaseModel):
 
 class CheckEventIn(BaseModel):
     child_id: str
-    event_type: Literal["on_the_way", "picked_up", "arrived_school", "leaving_school", "arriving_home", "delay", "no_show", "alt_dropoff"]
+    event_type: Literal["on_the_way", "approaching", "picked_up", "arrived_school", "leaving_school", "arriving_home", "arrived_home", "delay", "no_show", "alt_dropoff"]
     message: Optional[str] = None
     address: Optional[str] = None  # for alt_dropoff
 
 class LocationIn(BaseModel):
-    lat: float
-    lng: float
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+class RouteStartIn(BaseModel):
+    phase: Literal["morning", "afternoon"] = "morning"
+    seatbelts_checked: bool = False
+    fuel_level_checked: bool = False
+    phone_charged_and_mounted: bool = False
+
+class RoutePointIn(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+class RoutePlanIn(BaseModel):
+    phase: Literal["morning", "afternoon"]
+    addresses: List[str] = Field(default_factory=list, max_length=50)
+    points: List[RoutePointIn] = Field(min_length=2, max_length=1000)
+
+class EmergencyIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    message: Optional[str] = None
+
+class RouteEndIn(BaseModel):
+    all_children_accounted_for: bool = False
+    vehicle_checked_empty: bool = False
 
 class MessageIn(BaseModel):
-    to_user_id: str
-    text: str
-    child_id: Optional[str] = None
+    to_user_id: str = Field(min_length=1, max_length=100)
+    text: str = Field(min_length=1, max_length=2000)
+    child_id: Optional[str] = Field(default=None, max_length=100)
 
 class ScheduleRequestIn(BaseModel):
     child_id: str
@@ -175,38 +326,133 @@ class AnnouncementIn(BaseModel):
 
 class NotifPrefsIn(BaseModel):
     on_the_way: bool = True
+    approaching: bool = True
     picked_up: bool = True
     arrived_school: bool = True
     leaving_school: bool = True
     arriving_home: bool = True
+    arrived_home: bool = True
     delay: bool = True
+    no_show: bool = True
     announcements: bool = True
     mute_all: bool = False
 
+async def delete_service_account(user: dict) -> None:
+    """Delete a parent/driver account, or a child's login credentials."""
+    user_id = user["id"]
+    role = user.get("role")
+    if role not in ("parent", "driver", "child"):
+        raise HTTPException(400, "Administrator accounts cannot be deleted here")
+    if role == "driver" and user.get("on_duty"):
+        raise HTTPException(409, "End the active route before deleting this account")
+
+    await db.messages.delete_many({"$or": [{"from_user_id": user_id}, {"to_user_id": user_id}]})
+    await db.notifications.delete_many({"user_id": user_id})
+
+    if role == "parent":
+        children = await db.children.find({"parent_id": user_id}, {"_id": 0, "id": 1}).to_list(100)
+        child_ids = [child["id"] for child in children]
+        if child_ids:
+            await db.users.delete_many({"role": "child", "child_id": {"$in": child_ids}})
+            await db.events.delete_many({"child_id": {"$in": child_ids}})
+            await db.activity_events.delete_many({"child_id": {"$in": child_ids}})
+            await db.messages.delete_many({"child_id": {"$in": child_ids}})
+            await db.schedule_requests.delete_many({"child_id": {"$in": child_ids}})
+            await db.routes.update_many({}, {"$pull": {"child_ids": {"$in": child_ids}}})
+            await db.children.delete_many({"id": {"$in": child_ids}})
+        await db.schedule_requests.delete_many({"parent_id": user_id})
+    elif role == "driver":
+        await db.children.update_many({"driver_id": user_id}, {"$unset": {"driver_id": ""}})
+        await db.routes.update_many({"driver_id": user_id}, {"$unset": {"driver_id": ""}})
+        await db.vehicles.update_many({"driver_id": user_id}, {"$unset": {"driver_id": ""}})
+        await db.events.delete_many({"driver_id": user_id})
+        await db.activity_events.delete_many({"driver_id": user_id})
+        await db.driver_locations.delete_many({"driver_id": user_id})
+        await db.driver_route_points.delete_many({"driver_id": user_id})
+        await db.driver_route_plans.delete_many({"driver_id": user_id})
+
+    await db.users.delete_one({"id": user_id})
+
+async def upsert_child_access(
+    child_id: str,
+    email: str,
+    password: Optional[str],
+    enabled: bool,
+    confirmed_by: str,
+) -> dict:
+    """Create or update the restricted login tied to one child record."""
+    child = await db.children.find_one({"id": child_id}, {"_id": 0})
+    if not child:
+        raise HTTPException(404, "Child not found")
+    normalized_email = email.lower()
+    duplicate = await db.users.find_one({"email": normalized_email})
+    if duplicate and duplicate.get("child_id") != child_id:
+        raise HTTPException(409, "That email is already used by another account")
+    existing = await db.users.find_one({"role": "child", "child_id": child_id})
+    if not existing and not password:
+        raise HTTPException(400, "A password is required when creating child access")
+    update = {
+        "email": normalized_email,
+        "name": child["name"],
+        "role": "child",
+        "child_id": child_id,
+        "status": "active" if enabled else "suspended",
+        "updated_at": now_utc().isoformat(),
+    }
+    if password:
+        update["password_hash"] = hash_pw(password)
+    if not existing or not existing.get("guardian_consent_confirmed_at"):
+        update["guardian_consent_confirmed_at"] = now_utc().isoformat()
+        update["guardian_consent_confirmed_by"] = confirmed_by
+    if existing:
+        await db.users.update_one({"id": existing["id"]}, {"$set": update})
+        account_id = existing["id"]
+    else:
+        account_id = new_id()
+        await db.users.insert_one({
+            "id": account_id,
+            "created_at": now_utc().isoformat(),
+            "notif_prefs": NotifPrefsIn().model_dump(),
+            **update,
+        })
+    return {"id": account_id, "email": normalized_email, "status": update["status"]}
+
 # ---------- Auth ----------
-@api.post("/auth/register")
-async def register(data: RegisterIn):
-    if await db.users.find_one({"email": data.email.lower()}):
-        raise HTTPException(400, "Email already registered")
-    uid = new_id()
+@api.post("/auth/register", status_code=status.HTTP_201_CREATED)
+async def request_access(data: AccessRequestIn, request: Request):
+    """Create a parent or driver request that must be approved by an admin."""
+    email = data.email.lower()
+    client_ip = request.client.host if request.client else "unknown"
+    await enforce_rate_limit("register", client_ip, limit=5, window_seconds=3600)
+    if await db.users.find_one({"email": email}):
+        return {
+            "ok": True,
+            "status": "pending",
+            "message": "If this email is eligible, its access request is awaiting administrator review.",
+        }
     doc = {
-        "id": uid,
-        "email": data.email.lower(),
+        "id": new_id(),
+        "email": email,
         "password_hash": hash_pw(data.password),
-        "name": data.name,
+        "name": data.name.strip(),
         "role": data.role,
-        "phone": data.phone,
-        "photo_url": data.photo_url,
-        "address": data.address,
+        "phone": data.phone.strip() if data.phone else None,
+        "address": data.address.strip() if data.address and data.role == "parent" else None,
         "status": "pending",
         "created_at": now_utc().isoformat(),
         "notif_prefs": NotifPrefsIn().model_dump(),
     }
     await db.users.insert_one(doc)
-    return {"ok": True, "message": "Account submitted. Awaiting admin approval.", "status": "pending"}
+    return {
+        "ok": True,
+        "status": "pending",
+        "message": "Access request submitted for administrator approval.",
+    }
 
 @api.post("/auth/login", response_model=TokenOut)
-async def login(data: LoginIn):
+async def login(data: LoginIn, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    limit_key = await enforce_rate_limit("login", f"{client_ip}:{data.email.lower()}", limit=8, window_seconds=900)
     u = await db.users.find_one({"email": data.email.lower()})
     if not u or not verify_pw(data.password, u["password_hash"]):
         raise HTTPException(401, "Invalid email or password")
@@ -214,17 +460,36 @@ async def login(data: LoginIn):
         raise HTTPException(403, "Account pending admin approval")
     if u.get("status") == "suspended":
         raise HTTPException(403, "Account suspended. Contact your administrator.")
-    if u.get("role") == "parent" and u.get("status") != "active":
-        raise HTTPException(403, "Awaiting driver assignment by admin")
+    await db.auth_rate_limits.delete_one({"id": limit_key})
     public = {k: v for k, v in u.items() if k not in ("password_hash", "_id")}
     return TokenOut(access_token=make_token(u["id"], u["role"]), user=public)
+
+@api.post("/auth/delete-account")
+async def delete_account(data: DeleteAccountIn, request: Request):
+    """Self-service deletion for parent, driver, and child login accounts."""
+    email = data.email.lower()
+    client_ip = request.client.host if request.client else "unknown"
+    await enforce_rate_limit("delete-account", f"{client_ip}:{email}", limit=5, window_seconds=3600)
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_pw(data.password, user.get("password_hash", "")) or user.get("role") == "admin":
+        raise HTTPException(401, "Invalid email or password")
+    await delete_service_account(user)
+    return {"ok": True, "message": "Account and associated personal data deleted"}
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(current_user)):
     return user
 
 class PhotoIn(BaseModel):
-    photo_url: str
+    photo_url: str = Field(min_length=1, max_length=2_000_000)
+
+    @field_validator("photo_url")
+    @classmethod
+    def validate_photo_source(cls, value: str) -> str:
+        allowed_data = ("data:image/jpeg;base64,", "data:image/png;base64,", "data:image/webp;base64,")
+        if value.startswith(allowed_data) or value.startswith("https://"):
+            return value
+        raise ValueError("Profile photos must be an HTTPS URL or supported image upload")
 
 @api.put("/auth/photo")
 async def update_photo(data: PhotoIn, user: dict = Depends(current_user)):
@@ -241,14 +506,6 @@ async def admin_assign(cid: str, data: AssignIn, user: dict = Depends(require_ro
     await db.children.update_one({"id": cid}, {"$set": update})
     c = await db.children.find_one({"id": cid}, {"_id": 0})
     return c
-
-class ChildPhotoIn(BaseModel):
-    photo_url: str
-
-@api.put("/admin/children/{cid}/photo")
-async def admin_child_photo(cid: str, data: ChildPhotoIn, user: dict = Depends(require_role("admin"))):
-    await db.children.update_one({"id": cid}, {"$set": {"photo_url": data.photo_url}})
-    return {"ok": True}
 
 @api.get("/admin/pending-users")
 async def admin_pending(user: dict = Depends(require_role("admin"))):
@@ -290,11 +547,12 @@ async def admin_reactivate(uid: str, user: dict = Depends(require_role("admin"))
     u = await db.users.find_one({"id": uid})
     if not u:
         raise HTTPException(404, "User not found")
-    new_status = "active" if u.get("role") in ("driver", "admin") else "approved"
+    new_status = "active" if u.get("role") in ("driver", "child", "admin") else "approved"
     await db.users.update_one({"id": uid}, {"$set": {"status": new_status}})
     return {"ok": True, "status": new_status}
 
 class DriverComplianceIn(BaseModel):
+    license_number: Optional[str] = None
     license_expiry: Optional[str] = None
     permit_expiry: Optional[str] = None
 
@@ -378,7 +636,7 @@ async def admin_operations_today(user: dict = Depends(require_role("admin"))):
         et = (ev or {}).get("event_type")
         if et == "no_show":
             status = "absent"
-        elif et in ("picked_up", "arrived_school", "leaving_school", "arriving_home", "alt_dropoff"):
+        elif et in ("picked_up", "arrived_school", "leaving_school", "arriving_home", "arrived_home", "alt_dropoff"):
             status = "picked_up"
         else:
             status = "pending"
@@ -412,9 +670,15 @@ async def admin_events_history(date: Optional[str] = None, driver_id: Optional[s
             e["driver_name"] = d2.get("name") if d2 else None
     return events
 
-@api.put("/admin/users/{uid}")  # already declared above; keep idempotent for older import order
-async def _noop(): pass
+@api.get("/admin/activity")
+async def admin_activity(date: Optional[str] = None, user: dict = Depends(require_role("admin"))):
+    """Chronological safety timeline for route, attendance, delay, and SOS events."""
+    d = date or now_utc().date().isoformat()
+    return await db.activity_events.find(
+        {"created_at": {"$gte": d, "$lt": d + "T99"}}, {"_id": 0}
+    ).sort("created_at", -1).limit(1000).to_list(1000)
 
+@api.put("/admin/users/{uid}/compliance")
 async def admin_driver_compliance(uid: str, data: DriverComplianceIn, user: dict = Depends(require_role("admin"))):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
     if update:
@@ -432,47 +696,23 @@ async def admin_compliance_alerts(user: dict = Depends(require_role("admin"))):
         for fld in ("registration_expiry", "insurance_expiry", "inspection_expiry"):
             d = v.get(fld)
             if d and d <= horizon:
-                alerts.append({"kind": "vehicle", "item": v, "field": fld, "expires_on": d, "expired": d < today_s})
+                try:
+                    days_left = (date.fromisoformat(d) - today).days
+                except ValueError:
+                    continue
+                alerts.append({"kind": "vehicle", "item": v, "field": fld, "expires_on": d,
+                               "expired": d < today_s, "days_left": days_left})
     async for d in db.users.find({"role": "driver"}, {"_id": 0, "password_hash": 0}):
         for fld in ("license_expiry", "permit_expiry"):
             dt = d.get(fld)
             if dt and dt <= horizon:
-                alerts.append({"kind": "driver", "item": d, "field": fld, "expires_on": dt, "expired": dt < today_s})
+                try:
+                    days_left = (date.fromisoformat(dt) - today).days
+                except ValueError:
+                    continue
+                alerts.append({"kind": "driver", "item": d, "field": fld, "expires_on": dt,
+                               "expired": dt < today_s, "days_left": days_left})
     return alerts
-
-# ---------- Payments ----------
-class PaymentIn(BaseModel):
-    parent_id: str
-    month: str  # YYYY-MM
-    amount: float
-    status: Literal["paid", "pending", "overdue"] = "pending"
-    notes: Optional[str] = None
-
-@api.get("/admin/payments")
-async def admin_list_payments(month: Optional[str] = None, user: dict = Depends(require_role("admin"))):
-    q = {"month": month} if month else {}
-    pays = await db.payments.find(q, {"_id": 0}).sort("month", -1).to_list(500)
-    for p in pays:
-        parent = await db.users.find_one({"id": p["parent_id"]}, {"_id": 0, "password_hash": 0})
-        p["parent"] = parent
-    return pays
-
-@api.post("/admin/payments")
-async def admin_create_payment(data: PaymentIn, user: dict = Depends(require_role("admin"))):
-    doc = {"id": new_id(), **data.model_dump(), "created_at": now_utc().isoformat()}
-    await db.payments.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
-
-@api.put("/admin/payments/{pid}")
-async def admin_update_payment(pid: str, data: PaymentIn, user: dict = Depends(require_role("admin"))):
-    await db.payments.update_one({"id": pid}, {"$set": data.model_dump()})
-    return {"ok": True}
-
-@api.delete("/admin/payments/{pid}")
-async def admin_delete_payment(pid: str, user: dict = Depends(require_role("admin"))):
-    await db.payments.delete_one({"id": pid})
-    return {"ok": True}
 
 # ---------- Parent read-only child detail ----------
 @api.get("/parent/child/{cid}")
@@ -488,20 +728,81 @@ async def update_prefs(prefs: NotifPrefsIn, user: dict = Depends(current_user)):
     return {"ok": True, "notif_prefs": prefs.model_dump()}
 
 # ---------- Helpers to fetch joined data ----------
-async def _enrich_child(child: dict) -> dict:
+async def _enrich_child(child: dict, include_child_account: bool = False) -> dict:
     driver = None
     vehicle = None
+    child_account = None
+    if include_child_account:
+        child_account = await db.users.find_one(
+            {"role": "child", "child_id": child["id"]},
+            {"_id": 0, "id": 1, "email": 1, "status": 1, "guardian_consent_confirmed_at": 1},
+        )
     if child.get("driver_id"):
-        driver = await db.users.find_one({"id": child["driver_id"]}, {"_id": 0, "password_hash": 0})
+        driver = public_contact_user(await db.users.find_one({"id": child["driver_id"]}))
     if child.get("vehicle_id"):
         vehicle = await db.vehicles.find_one({"id": child["vehicle_id"]}, {"_id": 0})
-    return {**child, "driver": driver, "vehicle": vehicle}
+    enriched = {**child, "driver": driver, "vehicle": vehicle}
+    if include_child_account:
+        enriched["child_account"] = child_account
+    return enriched
 
 # ---------- Parent ----------
 @api.get("/parent/children")
 async def parent_children(user: dict = Depends(require_role("parent"))):
     kids = await db.children.find({"parent_id": user["id"]}, {"_id": 0}).to_list(100)
     return [await _enrich_child(c) for c in kids]
+
+@api.post("/parent/children", status_code=status.HTTP_201_CREATED)
+async def parent_create_child(data: ParentChildIn, user: dict = Depends(require_role("parent"))):
+    """Let an approved parent add their child and the child's restricted login."""
+    doc = {
+        "id": new_id(),
+        "name": data.name.strip(),
+        "parent_id": user["id"],
+        "driver_id": None,
+        "vehicle_id": None,
+        "school": data.school.strip(),
+        "pickup_time": data.pickup_time.strip(),
+        "dropoff_time": data.dropoff_time.strip(),
+        "home_address": data.home_address.strip(),
+        "school_address": data.school_address.strip(),
+        "birth_date": data.birth_date.strip() if data.birth_date else None,
+        "grade": data.grade.strip() if data.grade else None,
+        "round_trip": data.round_trip,
+        "emergency_contact_name": data.emergency_contact_name.strip() if data.emergency_contact_name else None,
+        "emergency_contact_phone": data.emergency_contact_phone.strip() if data.emergency_contact_phone else None,
+        "contact_phone": data.contact_phone.strip() if data.contact_phone else None,
+        "assignment_status": "pending_admin_assignment",
+        "created_by_parent": True,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.children.insert_one(doc)
+    try:
+        child_account = await upsert_child_access(
+            doc["id"],
+            data.child_email.lower(),
+            data.child_password,
+            enabled=True,
+            confirmed_by=user["id"],
+        )
+    except Exception:
+        await db.children.delete_one({"id": doc["id"]})
+        raise
+
+    admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(20)
+    notifications = [{
+        "id": new_id(),
+        "user_id": admin["id"],
+        "type": "child_pending_assignment",
+        "title": "Child added by parent",
+        "body": f"{user['name']} added {doc['name']}. Assign a driver and vehicle.",
+        "read": False,
+        "created_at": now_utc().isoformat(),
+    } for admin in admins]
+    if notifications:
+        await db.notifications.insert_many(notifications)
+    clean_doc = {k: v for k, v in doc.items() if k != "_id"}
+    return {**await _enrich_child(clean_doc), "child_account": child_account}
 
 @api.get("/parent/dashboard")
 async def parent_dashboard(user: dict = Depends(require_role("parent"))):
@@ -518,15 +819,123 @@ async def parent_dashboard(user: dict = Depends(require_role("parent"))):
 
 @api.get("/parent/track/{child_id}")
 async def track_child(child_id: str, user: dict = Depends(require_role("parent"))):
+    await refresh_development_demo_locations()
     child = await db.children.find_one({"id": child_id, "parent_id": user["id"]}, {"_id": 0})
     if not child:
         raise HTTPException(404, "Child not found")
     location = None
+    route_points = []
+    planned_route_points = []
+    planned_addresses = []
+    route_phase = None
     if child.get("driver_id"):
-        location = await db.driver_locations.find_one({"driver_id": child["driver_id"]}, {"_id": 0})
+        location = fresh_location(await db.driver_locations.find_one({"driver_id": child["driver_id"]}, {"_id": 0}))
+        if location and location.get("route_session_id"):
+            recent_cutoff = (now_utc() - timedelta(minutes=2)).isoformat()
+            route_points = await db.driver_route_points.find(
+                {"driver_id": child["driver_id"], "route_session_id": location["route_session_id"],
+                 "recorded_at": {"$gte": recent_cutoff}},
+                {"_id": 0, "lat": 1, "lng": 1, "recorded_at": 1},
+            ).sort("recorded_at", 1).to_list(100)
+            plan = await db.driver_route_plans.find_one(
+                {"driver_id": child["driver_id"], "route_session_id": location["route_session_id"]},
+                {"_id": 0, "phase": 1, "points": 1},
+            )
+            if plan:
+                route_phase = plan.get("phase")
+                # The route geometry is shared for live tracking, but other families'
+                # stop addresses remain private.
+                planned_route_points = plan.get("points", [])
     events = await db.events.find({"child_id": child_id}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
     enriched = await _enrich_child(child)
-    return {"child": enriched, "location": location, "events": events}
+    return {
+        "child": enriched,
+        "location": location,
+        "route_points": route_points,
+        "planned_route_points": planned_route_points,
+        "planned_addresses": planned_addresses,
+        "route_phase": route_phase,
+        "events": events,
+    }
+
+# ---------- Child (restricted, read-only transportation view) ----------
+@api.get("/child/track")
+async def child_track(user: dict = Depends(require_role("child"))):
+    await refresh_development_demo_locations()
+    child_id = user.get("child_id")
+    child = await db.children.find_one({"id": child_id}, {"_id": 0})
+    if not child:
+        raise HTTPException(404, "Child assignment not found")
+
+    location = None
+    route_points = []
+    if child.get("driver_id"):
+        location = fresh_location(await db.driver_locations.find_one(
+            {"driver_id": child["driver_id"]}, {"_id": 0}
+        ))
+        if location and location.get("route_session_id"):
+            recent_cutoff = (now_utc() - timedelta(minutes=2)).isoformat()
+            route_points = await db.driver_route_points.find(
+                {
+                    "driver_id": child["driver_id"],
+                    "route_session_id": location["route_session_id"],
+                    "recorded_at": {"$gte": recent_cutoff},
+                },
+                {"_id": 0, "lat": 1, "lng": 1, "recorded_at": 1},
+            ).sort("recorded_at", 1).to_list(100)
+
+    driver_record = await db.users.find_one({"id": child.get("driver_id")}) if child.get("driver_id") else None
+    driver = {
+        key: driver_record.get(key)
+        for key in ("id", "name", "phone", "photo_url")
+        if driver_record and driver_record.get(key) is not None
+    } if driver_record else None
+    vehicle = await db.vehicles.find_one(
+        {"id": child.get("vehicle_id")},
+        {"_id": 0, "id": 1, "make": 1, "model": 1, "color": 1, "plate": 1, "photo_url": 1, "fleet_index": 1},
+    ) if child.get("vehicle_id") else None
+    events = await db.events.find(
+        {"child_id": child["id"]},
+        {"_id": 0, "id": 1, "event_type": 1, "message": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(10).to_list(10)
+
+    # Do not expose guardian IDs, family addresses, other route stops, or other children.
+    child_view = restricted_child_view(child)
+    return {
+        "child": child_view,
+        "driver": driver,
+        "vehicle": vehicle,
+        "location": location,
+        "route_points": route_points,
+        "events": events,
+    }
+
+@api.post("/child/ready")
+async def child_ready(user: dict = Depends(require_role("child"))):
+    child = await db.children.find_one({"id": user.get("child_id")}, {"_id": 0})
+    if not child:
+        raise HTTPException(404, "Child assignment not found")
+    cutoff = (now_utc() - timedelta(minutes=5)).isoformat()
+    if await db.activity_events.find_one({
+        "child_id": child["id"], "event_type": "child_ready", "created_at": {"$gte": cutoff}
+    }):
+        raise HTTPException(429, "Your driver was already notified. Please wait a few minutes.")
+
+    recipients = [value for value in (child.get("parent_id"), child.get("driver_id")) if value]
+    notifications = [{
+        "id": new_id(), "user_id": recipient, "type": "child_ready",
+        "title": f"{child['name']} is ready", "body": "Ready for the assigned pickup.",
+        "read": False, "created_at": now_utc().isoformat(),
+    } for recipient in recipients]
+    if notifications:
+        await db.notifications.insert_many(notifications)
+    await db.activity_events.insert_one({
+        "id": new_id(), "event_type": "child_ready", "child_id": child["id"],
+        "driver_id": child.get("driver_id"), "title": f"{child['name']} is ready",
+        "detail": "Child confirmed readiness for the assigned pickup.",
+        "created_at": now_utc().isoformat(),
+    })
+    return {"ok": True, "message": "Your assigned driver and parent were notified."}
 
 @api.post("/parent/schedule-request")
 async def create_schedule_request(req: ScheduleRequestIn, user: dict = Depends(require_role("parent"))):
@@ -549,7 +958,7 @@ async def driver_today(user: dict = Depends(require_role("driver"))):
     kids = await db.children.find({"driver_id": user["id"]}, {"_id": 0}).to_list(100)
     out = []
     for c in kids:
-        parent = await db.users.find_one({"id": c["parent_id"]}, {"_id": 0, "password_hash": 0})
+        parent = public_contact_user(await db.users.find_one({"id": c["parent_id"]}))
         ev = await db.events.find_one({"child_id": c["id"]}, {"_id": 0}, sort=[("created_at", -1)])
         out.append({**c, "parent": parent, "latest_event": ev})
     # sort by pickup_time
@@ -582,16 +991,30 @@ async def driver_checkin(data: CheckEventIn, user: dict = Depends(require_role("
         "created_at": now_utc().isoformat(),
     }
     await db.notifications.insert_one(notif)
+    await db.activity_events.insert_one({
+        "id": new_id(), "source_event_id": ev["id"],
+        "type": data.event_type,
+        "severity": "warning" if data.event_type in ("no_show", "delay") else "success",
+        "title": _event_title(data.event_type, child["name"]),
+        "detail": data.message or _event_body(data.event_type, child["name"]),
+        "child_id": child["id"],
+        "child_name": child["name"],
+        "driver_id": user["id"],
+        "driver_name": user["name"],
+        "created_at": now_utc().isoformat(),
+    })
     ev.pop("_id", None)
     return ev
 
 def _event_title(t: str, name: str) -> str:
     return {
         "on_the_way": f"Driver on the way to {name}",
+        "approaching": f"Driver is approaching {name}",
         "picked_up": f"{name} has been picked up",
         "arrived_school": f"{name} arrived at school",
         "leaving_school": f"{name} is leaving school",
         "arriving_home": f"{name} is almost home",
+        "arrived_home": f"{name} arrived home",
         "delay": f"Traffic delay for {name}",
         "no_show": f"{name} did not show up for pickup",
         "alt_dropoff": f"{name} dropped at alternate address",
@@ -600,10 +1023,12 @@ def _event_title(t: str, name: str) -> str:
 def _event_body(t: str, name: str) -> str:
     return {
         "on_the_way": f"Your driver is heading to pick up {name}.",
+        "approaching": f"Your driver is approaching {name}'s pickup location.",
         "picked_up": f"{name} is safely in the vehicle.",
         "arrived_school": f"{name} arrived safely at school.",
         "leaving_school": f"{name} just left school.",
         "arriving_home": f"{name} will arrive home shortly.",
+        "arrived_home": f"{name} was safely dropped off at home.",
         "delay": "There is a traffic delay on the route.",
         "no_show": f"{name} was not present at pickup location. Please contact your driver.",
         "alt_dropoff": f"{name} was dropped at an alternate location.",
@@ -611,26 +1036,163 @@ def _event_body(t: str, name: str) -> str:
 
 @api.post("/driver/location")
 async def driver_location(data: LocationIn, user: dict = Depends(require_role("driver"))):
+    if not user.get("on_duty") or not user.get("route_session_id"):
+        raise HTTPException(409, "Start an assigned route before sharing location")
+    recorded_at = now_utc().isoformat()
+    route_session_id = user.get("route_session_id")
     await db.driver_locations.update_one(
         {"driver_id": user["id"]},
         {"$set": {"driver_id": user["id"], "lat": data.lat, "lng": data.lng,
-                  "updated_at": now_utc().isoformat()}},
+                  "route_session_id": route_session_id, "updated_at": recorded_at,
+                  "expires_at": now_utc() + timedelta(seconds=45)}},
         upsert=True,
     )
+    if user.get("on_duty") and route_session_id:
+        await db.driver_route_points.insert_one({
+            "id": new_id(), "driver_id": user["id"], "route_session_id": route_session_id,
+            "lat": data.lat, "lng": data.lng, "recorded_at": recorded_at,
+            "expires_at": now_utc() + timedelta(days=GPS_RETENTION_DAYS),
+        })
     return {"ok": True}
 
 @api.post("/driver/route/start")
-async def route_start(user: dict = Depends(require_role("driver"))):
-    await db.users.update_one({"id": user["id"]}, {"$set": {"on_duty": True}})
-    return {"ok": True, "on_duty": True}
+async def route_start(data: RouteStartIn, user: dict = Depends(require_role("driver"))):
+    precheck = {
+        "seatbelts_checked": data.seatbelts_checked,
+        "fuel_level_checked": data.fuel_level_checked,
+        "phone_charged_and_mounted": data.phone_charged_and_mounted,
+    }
+    if not all(precheck.values()):
+        raise HTTPException(400, "Complete the seatbelt, fuel, and mounted-phone checks before starting")
+    phase = data.phase
+    children = await db.children.find({"driver_id": user["id"]}, {"_id": 0}).to_list(100)
+    if not children:
+        raise HTTPException(400, "No children are assigned to this driver")
+    route_session_id = new_id()
+    await db.driver_route_points.delete_many({"driver_id": user["id"]})
+    await db.driver_route_plans.delete_many({"driver_id": user["id"]})
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"on_duty": True, "route_session_id": route_session_id, "route_phase": phase}},
+    )
+    started_at = now_utc().isoformat()
+    parent_notifications = []
+    child_events = []
+    for child in children:
+        child_events.append({
+            "id": new_id(), "child_id": child["id"], "driver_id": user["id"],
+            "event_type": "on_the_way", "message": _event_body("on_the_way", child["name"]),
+            "address": None, "created_at": started_at,
+        })
+        parent_notifications.append({
+            "id": new_id(), "user_id": child["parent_id"], "type": "on_the_way",
+            "title": _event_title("on_the_way", child["name"]),
+            "body": _event_body("on_the_way", child["name"]), "read": False,
+            "created_at": started_at,
+        })
+    if child_events:
+        await db.events.insert_many(child_events)
+    if parent_notifications:
+        await db.notifications.insert_many(parent_notifications)
+    await db.activity_events.insert_one({
+        "id": new_id(), "type": "route_started", "severity": "info",
+        "title": f"{user['name']} started the route",
+        "detail": f"Pre-route check completed · {len(children)} children assigned",
+        "driver_id": user["id"], "driver_name": user["name"],
+        "route_session_id": route_session_id, "route_phase": phase,
+        "pre_route_check": precheck, "created_at": started_at,
+    })
+    return {"ok": True, "on_duty": True, "route_session_id": route_session_id, "route_phase": phase}
+
+@api.post("/driver/route/plan")
+async def route_plan(data: RoutePlanIn, user: dict = Depends(require_role("driver"))):
+    route_session_id = user.get("route_session_id")
+    if not user.get("on_duty") or not route_session_id:
+        raise HTTPException(400, "Start the route before saving its planned path")
+    if len(data.points) < 2:
+        raise HTTPException(400, "Planned route needs at least two points")
+    if len(data.points) > 1000:
+        raise HTTPException(400, "Planned route is too detailed")
+    doc = {
+        "id": new_id(),
+        "driver_id": user["id"],
+        "route_session_id": route_session_id,
+        "phase": data.phase,
+        "addresses": data.addresses,
+        "points": [point.model_dump() for point in data.points],
+        "created_at": now_utc().isoformat(),
+        "expires_at": now_utc() + timedelta(days=GPS_RETENTION_DAYS),
+    }
+    await db.driver_route_plans.update_one(
+        {"driver_id": user["id"], "route_session_id": route_session_id},
+        {"$set": doc},
+        upsert=True,
+    )
+    return {"ok": True, "point_count": len(doc["points"]), "addresses": doc["addresses"]}
 
 @api.post("/driver/route/end")
-async def route_end(user: dict = Depends(require_role("driver"))):
-    await db.users.update_one({"id": user["id"]}, {"$set": {"on_duty": False}})
+async def route_end(data: Optional[RouteEndIn] = None, user: dict = Depends(require_role("driver"))):
+    safety = data or RouteEndIn()
+    ended_at = now_utc().isoformat()
+    children = await db.children.find({"driver_id": user["id"]}, {"_id": 0}).to_list(100)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"on_duty": False}, "$unset": {"route_session_id": "", "route_phase": ""}},
+    )
     await db.driver_locations.delete_one({"driver_id": user["id"]})
-    return {"ok": True, "on_duty": False}
+    await db.activity_events.insert_one({
+        "id": new_id(), "type": "route_completed", "severity": "success",
+        "title": f"{user['name']} completed the route",
+        "detail": "Vehicle empty check confirmed" if safety.vehicle_checked_empty else "Route ended",
+        "driver_id": user["id"], "driver_name": user["name"],
+        "safety_check": safety.model_dump(), "created_at": ended_at,
+    })
+    notifications = [{
+        "id": new_id(), "user_id": child["parent_id"], "type": "route_completed",
+        "title": "Route completed", "body": f"{user['name']} completed today's route and final vehicle check.",
+        "read": False, "created_at": ended_at,
+    } for child in children]
+    if notifications:
+        await db.notifications.insert_many(notifications)
+    return {"ok": True, "on_duty": False, "safety_check": safety.model_dump()}
+
+@api.post("/driver/emergency")
+async def driver_emergency(data: EmergencyIn, user: dict = Depends(require_role("driver"))):
+    created_at = now_utc().isoformat()
+    admins = await db.users.find({"role": "admin", "status": {"$ne": "suspended"}}, {"_id": 0, "password_hash": 0}).to_list(50)
+    activity = {
+        "id": new_id(), "type": "emergency", "severity": "critical",
+        "title": f"SOS from {user['name']}",
+        "detail": data.message or "Driver requested immediate administrator assistance.",
+        "driver_id": user["id"], "driver_name": user["name"],
+        "lat": data.lat, "lng": data.lng, "created_at": created_at,
+    }
+    await db.activity_events.insert_one(activity)
+    notifications = [{
+        "id": new_id(), "user_id": admin["id"], "type": "emergency",
+        "title": activity["title"], "body": activity["detail"], "read": False,
+        "lat": data.lat, "lng": data.lng, "created_at": created_at,
+    } for admin in admins]
+    if notifications:
+        await db.notifications.insert_many(notifications)
+    return {
+        "ok": True,
+        "alerted_admins": len(admins),
+        "admin_phone": next((admin.get("phone") for admin in admins if admin.get("phone")), None),
+    }
 
 # ---------- Chat ----------
+async def can_chat(user: dict, other_user_id: str, child_id: Optional[str] = None) -> bool:
+    if user.get("role") == "parent":
+        query = {"parent_id": user["id"], "driver_id": other_user_id}
+    elif user.get("role") == "driver":
+        query = {"driver_id": user["id"], "parent_id": other_user_id}
+    else:
+        return False
+    if child_id:
+        query["id"] = child_id
+    return await db.children.find_one(query, {"_id": 0, "id": 1}) is not None
+
 @api.get("/chat/conversations")
 async def chat_conversations(user: dict = Depends(current_user)):
     # for parent: list assigned drivers; for driver: list parents of assigned kids
@@ -641,7 +1203,7 @@ async def chat_conversations(user: dict = Depends(current_user)):
         for c in kids:
             if c.get("driver_id") and c["driver_id"] not in seen:
                 seen.add(c["driver_id"])
-                d = await db.users.find_one({"id": c["driver_id"]}, {"_id": 0, "password_hash": 0})
+                d = public_contact_user(await db.users.find_one({"id": c["driver_id"]}))
                 if d:
                     contacts.append({"user": d, "child_name": c["name"]})
     elif user["role"] == "driver":
@@ -650,13 +1212,15 @@ async def chat_conversations(user: dict = Depends(current_user)):
         for c in kids:
             if c["parent_id"] not in seen:
                 seen.add(c["parent_id"])
-                p = await db.users.find_one({"id": c["parent_id"]}, {"_id": 0, "password_hash": 0})
+                p = public_contact_user(await db.users.find_one({"id": c["parent_id"]}))
                 if p:
                     contacts.append({"user": p, "child_name": c["name"]})
     return contacts
 
 @api.get("/chat/messages/{other_user_id}")
 async def chat_messages(other_user_id: str, user: dict = Depends(current_user)):
+    if not await can_chat(user, other_user_id):
+        raise HTTPException(403, "Messaging is limited to active child assignments")
     msgs = await db.messages.find({
         "$or": [
             {"from_user_id": user["id"], "to_user_id": other_user_id},
@@ -667,15 +1231,33 @@ async def chat_messages(other_user_id: str, user: dict = Depends(current_user)):
 
 @api.post("/chat/send")
 async def chat_send(data: MessageIn, user: dict = Depends(current_user)):
+    text = data.text.strip()
+    if not text:
+        raise HTTPException(400, "Message cannot be blank")
+    if not await can_chat(user, data.to_user_id, data.child_id):
+        raise HTTPException(403, "Messaging is limited to active child assignments")
     msg = {
         "id": new_id(),
         "from_user_id": user["id"],
         "to_user_id": data.to_user_id,
-        "text": data.text,
+        "text": text,
         "child_id": data.child_id,
         "created_at": now_utc().isoformat(),
     }
     await db.messages.insert_one(msg)
+    recipient = await db.users.find_one({"id": data.to_user_id}, {"_id": 0, "password_hash": 0})
+    if recipient and {user.get("role"), recipient.get("role")} == {"parent", "driver"}:
+        child = await db.children.find_one({"id": data.child_id}, {"_id": 0, "name": 1}) if data.child_id else None
+        await db.activity_events.insert_one({
+            "id": new_id(), "type": "message", "severity": "info",
+            "title": f"Message from {user['name']} to {recipient['name']}",
+            "detail": text,
+            "child_id": data.child_id,
+            "child_name": child.get("name") if child else None,
+            "driver_id": user["id"] if user.get("role") == "driver" else recipient["id"],
+            "driver_name": user["name"] if user.get("role") == "driver" else recipient["name"],
+            "created_at": msg["created_at"],
+        })
     msg.pop("_id", None)
     return msg
 
@@ -697,28 +1279,20 @@ async def admin_users(role: Optional[str] = None, user: dict = Depends(require_r
     users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     return users
 
-@api.post("/admin/users")
-async def admin_create_user(data: RegisterIn, user: dict = Depends(require_role("admin"))):
-    if await db.users.find_one({"email": data.email.lower()}):
-        raise HTTPException(400, "Email already registered")
-    uid = new_id()
-    doc = {
-        "id": uid, "email": data.email.lower(), "password_hash": hash_pw(data.password),
-        "name": data.name, "role": data.role, "phone": data.phone, "photo_url": data.photo_url,
-        "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    await db.users.insert_one(doc)
-    return {k: v for k, v in doc.items() if k != "password_hash" and k != "_id"}
-
 @api.delete("/admin/users/{uid}")
 async def admin_delete_user(uid: str, user: dict = Depends(require_role("admin"))):
-    await db.users.delete_one({"id": uid})
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.get("role") == "admin":
+        raise HTTPException(400, "Administrator accounts cannot be deleted from the app")
+    await delete_service_account(target)
     return {"ok": True}
 
 @api.get("/admin/children")
 async def admin_children(user: dict = Depends(require_role("admin"))):
     kids = await db.children.find({}, {"_id": 0}).to_list(500)
-    return [await _enrich_child(c) for c in kids]
+    return [await _enrich_child(c, include_child_account=True) for c in kids]
 
 @api.post("/admin/children")
 async def admin_create_child(data: ChildIn, user: dict = Depends(require_role("admin"))):
@@ -730,11 +1304,40 @@ async def admin_create_child(data: ChildIn, user: dict = Depends(require_role("a
 @api.put("/admin/children/{cid}")
 async def admin_update_child(cid: str, data: ChildIn, user: dict = Depends(require_role("admin"))):
     await db.children.update_one({"id": cid}, {"$set": data.model_dump()})
+    await db.users.update_one({"role": "child", "child_id": cid}, {"$set": {"name": data.name.strip()}})
     c = await db.children.find_one({"id": cid}, {"_id": 0})
     return c
 
+@api.put("/admin/children/{cid}/access")
+async def admin_set_child_access(cid: str, data: ChildAccessIn, user: dict = Depends(require_role("admin"))):
+    """Create or update the restricted login tied to one existing child record."""
+    if not data.guardian_consent_confirmed:
+        raise HTTPException(400, "Confirm parent or guardian authorization before enabling child access")
+    return await upsert_child_access(
+        cid,
+        data.email.lower(),
+        data.password,
+        enabled=data.enabled,
+        confirmed_by=user["id"],
+    )
+
+@api.delete("/admin/children/{cid}/access")
+async def admin_delete_child_access(cid: str, user: dict = Depends(require_role("admin"))):
+    account = await db.users.find_one({"role": "child", "child_id": cid})
+    if account:
+        await delete_service_account(account)
+    return {"ok": True}
+
 @api.delete("/admin/children/{cid}")
 async def admin_delete_child(cid: str, user: dict = Depends(require_role("admin"))):
+    account = await db.users.find_one({"role": "child", "child_id": cid})
+    if account:
+        await delete_service_account(account)
+    await db.events.delete_many({"child_id": cid})
+    await db.activity_events.delete_many({"child_id": cid})
+    await db.messages.delete_many({"child_id": cid})
+    await db.schedule_requests.delete_many({"child_id": cid})
+    await db.routes.update_many({}, {"$pull": {"child_ids": cid}})
     await db.children.delete_one({"id": cid})
     return {"ok": True}
 
@@ -751,12 +1354,40 @@ async def admin_create_vehicle(data: VehicleIn, user: dict = Depends(require_rol
 
 @api.get("/admin/live-routes")
 async def admin_live_routes(user: dict = Depends(require_role("admin"))):
-    drivers = await db.users.find({"role": "driver"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    await refresh_development_demo_locations()
+    drivers = await db.users.find({"role": "driver"}, {"_id": 0, "password_hash": 0}).sort("name", 1).to_list(200)
+    route_colors = ["#D4AF37", "#3B82F6", "#EF4444", "#10B981", "#A855F7", "#F97316", "#06B6D4", "#EC4899", "#84CC16", "#E5E7EB"]
     out = []
-    for d in drivers:
-        loc = await db.driver_locations.find_one({"driver_id": d["id"]}, {"_id": 0})
+    for index, d in enumerate(drivers):
+        loc = fresh_location(await db.driver_locations.find_one({"driver_id": d["id"]}, {"_id": 0}))
         kids = await db.children.find({"driver_id": d["id"]}, {"_id": 0}).to_list(50)
-        out.append({"driver": d, "location": loc, "children": kids})
+        route = await db.routes.find_one({"driver_id": d["id"]}, {"_id": 0})
+        vehicle_id = (route or {}).get("vehicle_id") or next((kid.get("vehicle_id") for kid in kids if kid.get("vehicle_id")), None)
+        vehicle = await db.vehicles.find_one({"id": vehicle_id}, {"_id": 0}) if vehicle_id else None
+        route_points = []
+        planned_route_points = []
+        if loc and loc.get("route_session_id"):
+            route_points = await db.driver_route_points.find(
+                {"driver_id": d["id"], "route_session_id": loc["route_session_id"]},
+                {"_id": 0, "lat": 1, "lng": 1, "recorded_at": 1},
+            ).sort("recorded_at", 1).to_list(500)
+            plan = await db.driver_route_plans.find_one(
+                {"driver_id": d["id"], "route_session_id": loc["route_session_id"]},
+                {"_id": 0},
+            )
+            if plan:
+                planned_route_points = plan.get("points", [])
+        out.append({
+            "driver": d,
+            "vehicle": vehicle,
+            "location": loc,
+            "children": kids,
+            "route_id": (route or {}).get("id"),
+            "route_name": (route or {}).get("name") or f"Route {index + 1:02d}",
+            "route_color": (route or {}).get("route_color") or route_colors[index % len(route_colors)],
+            "route_points": route_points,
+            "planned_route_points": planned_route_points,
+        })
     return out
 
 @api.post("/admin/announcement")
@@ -793,99 +1424,285 @@ async def list_announcements(user: dict = Depends(current_user)):
 async def migrate_statuses():
     """Ensure all users have a status field (for legacy demo seeds)."""
     await db.users.update_many(
-        {"role": {"$in": ["parent", "driver", "admin"]}, "status": {"$exists": False}},
+        {"role": {"$in": ["parent", "driver", "child", "admin"]}, "status": {"$exists": False}},
         {"$set": {"status": "active"}}
     )
 
-# ---------- Seed ----------
-async def seed_demo_data():
-    if await db.users.count_documents({}) > 0:
-        log.info("Seed: users exist, skipping")
+# ---------- Admin bootstrap and legacy demo cleanup ----------
+async def ensure_admin():
+    """Keep one environment-controlled administrator without hard-coded credentials."""
+    existing = await db.users.find_one({"email": ADMIN_EMAIL})
+    values = {
+        "email": ADMIN_EMAIL,
+        "role": "admin",
+        "status": "active",
+        "notif_prefs": NotifPrefsIn().model_dump(),
+    }
+    if existing:
+        if not verify_pw(ADMIN_PASSWORD, existing.get("password_hash", "")):
+            values["password_hash"] = hash_pw(ADMIN_PASSWORD)
+        await db.users.update_one({"id": existing["id"]}, {"$set": values})
         return
-    log.info("Seeding demo data...")
-
-    # Admin
-    admin = {
-        "id": new_id(), "email": "admin@vipkids.com", "password_hash": hash_pw("admin123"),
-        "name": "Marcus Hollings", "role": "admin", "phone": "+1-954-555-0100",
-        "photo_url": "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200",
-        "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    # Drivers
-    driver1 = {
-        "id": new_id(), "email": "driver@vipkids.com", "password_hash": hash_pw("driver123"),
-        "name": "James Whitfield", "role": "driver", "phone": "+1-954-555-0201",
-        "photo_url": "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=300",
-        "created_at": now_utc().isoformat(), "on_duty": False,
-        "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    driver2 = {
-        "id": new_id(), "email": "driver2@vipkids.com", "password_hash": hash_pw("driver123"),
-        "name": "Robert Alvarez", "role": "driver", "phone": "+1-954-555-0202",
-        "photo_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300",
-        "created_at": now_utc().isoformat(), "on_duty": False,
-        "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    # Parents
-    parent1 = {
-        "id": new_id(), "email": "parent@vipkids.com", "password_hash": hash_pw("parent123"),
-        "name": "Isabella Sterling", "role": "parent", "phone": "+1-954-555-0301",
-        "photo_url": "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=200",
-        "status": "active",
-        "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    parent2 = {
-        "id": new_id(), "email": "parent2@vipkids.com", "password_hash": hash_pw("parent123"),
-        "name": "David Chen", "role": "parent", "phone": "+1-954-555-0302",
-        "photo_url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200",
-        "status": "active",
-        "created_at": now_utc().isoformat(), "notif_prefs": NotifPrefsIn().model_dump(),
-    }
-    await db.users.insert_many([admin, driver1, driver2, parent1, parent2])
-
-    # Vehicles
-    v1 = {"id": new_id(), "make": "Cadillac", "model": "Escalade", "plate": "VIP-001", "color": "Obsidian Black"}
-    v2 = {"id": new_id(), "make": "Mercedes-Benz", "model": "S-Class", "plate": "VIP-002", "color": "Onyx"}
-    await db.vehicles.insert_many([v1, v2])
-
-    # Children
-    c1 = {
-        "id": new_id(), "name": "Olivia Sterling",
-        "photo_url": "https://images.unsplash.com/photo-1519457431-44ccd64a579b?w=300",
-        "parent_id": parent1["id"], "driver_id": driver1["id"], "vehicle_id": v1["id"],
-        "school": "Pine Crest School", "pickup_time": "07:15", "dropoff_time": "15:30",
-        "home_address": "2400 Hollywood Blvd, Hollywood, FL",
-        "school_address": "1501 NE 62nd St, Fort Lauderdale, FL",
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "VIP Kids Administrator",
+        "phone": None,
         "created_at": now_utc().isoformat(),
-    }
-    c2 = {
-        "id": new_id(), "name": "Henry Sterling",
-        "photo_url": "https://images.unsplash.com/photo-1503944583220-79d8926ad5e2?w=300",
-        "parent_id": parent1["id"], "driver_id": driver1["id"], "vehicle_id": v1["id"],
-        "school": "Pine Crest School", "pickup_time": "07:15", "dropoff_time": "15:30",
-        "home_address": "2400 Hollywood Blvd, Hollywood, FL",
-        "school_address": "1501 NE 62nd St, Fort Lauderdale, FL",
-        "created_at": now_utc().isoformat(),
-    }
-    c3 = {
-        "id": new_id(), "name": "Sophia Chen",
-        "photo_url": "https://images.unsplash.com/photo-1595967596797-9fcae3ca6c19?w=300",
-        "parent_id": parent2["id"], "driver_id": driver2["id"], "vehicle_id": v2["id"],
-        "school": "American Heritage School", "pickup_time": "07:30", "dropoff_time": "15:45",
-        "home_address": "100 N Federal Hwy, Hollywood, FL",
-        "school_address": "12200 W Broward Blvd, Plantation, FL",
-        "created_at": now_utc().isoformat(),
-    }
-    await db.children.insert_many([c1, c2, c3])
-    log.info("Seed complete.")
+        "password_hash": hash_pw(ADMIN_PASSWORD),
+        **values,
+    })
+
+async def remove_legacy_demo_data():
+    """Remove only the original fictional seed records; never delete customer-created data."""
+    migration_id = "remove_legacy_demo_data_v1"
+    if await db.migrations.find_one({"id": migration_id}):
+        await db.children.update_many({"photo_url": {"$exists": True}}, {"$unset": {"photo_url": ""}})
+        return
+    demo_emails = [
+        "driver@vipkids.com", "driver2@vipkids.com",
+        "parent@vipkids.com", "parent2@vipkids.com",
+    ]
+    demo_users = await db.users.find({"email": {"$in": demo_emails}}, {"_id": 0, "id": 1}).to_list(20)
+    demo_user_ids = [item["id"] for item in demo_users]
+    demo_vehicles = await db.vehicles.find({"plate": {"$in": ["VIP-001", "VIP-002"]}}, {"_id": 0, "id": 1}).to_list(20)
+    demo_vehicle_ids = [item["id"] for item in demo_vehicles]
+    demo_children = await db.children.find({
+        "$or": [
+            {"parent_id": {"$in": demo_user_ids}},
+            {"driver_id": {"$in": demo_user_ids}},
+            {"vehicle_id": {"$in": demo_vehicle_ids}},
+        ]
+    }, {"_id": 0, "id": 1}).to_list(100)
+    demo_child_ids = [item["id"] for item in demo_children]
+    if demo_child_ids:
+        await db.events.delete_many({"child_id": {"$in": demo_child_ids}})
+    if demo_user_ids:
+        await db.users.delete_many({"id": {"$in": demo_user_ids}})
+        await db.notifications.delete_many({"user_id": {"$in": demo_user_ids}})
+        await db.messages.delete_many({"$or": [
+            {"from_user_id": {"$in": demo_user_ids}},
+            {"to_user_id": {"$in": demo_user_ids}},
+        ]})
+        await db.driver_locations.delete_many({"driver_id": {"$in": demo_user_ids}})
+        await db.driver_route_points.delete_many({"driver_id": {"$in": demo_user_ids}})
+        await db.driver_route_plans.delete_many({"driver_id": {"$in": demo_user_ids}})
+    if demo_child_ids:
+        await db.children.delete_many({"id": {"$in": demo_child_ids}})
+    if demo_vehicle_ids:
+        await db.vehicles.delete_many({"id": {"$in": demo_vehicle_ids}})
+    if demo_user_ids or demo_vehicle_ids or demo_child_ids:
+        await db.routes.delete_many({"$or": [
+            {"driver_id": {"$in": demo_user_ids}},
+            {"vehicle_id": {"$in": demo_vehicle_ids}},
+            {"child_ids": {"$in": demo_child_ids}},
+        ]})
+    await db.children.update_many({"photo_url": {"$exists": True}}, {"$unset": {"photo_url": ""}})
+    await db.migrations.insert_one({"id": migration_id, "applied_at": now_utc().isoformat()})
+
+async def ensure_development_demo_accounts():
+    """Seed local-only demo accounts for quick phone testing."""
+    if ENVIRONMENT == "production" or os.environ.get("ENABLE_DEMO_ACCOUNTS", "true").lower() not in ("1", "true", "yes"):
+        return
+    password = os.environ.get("DEMO_PASSWORD", "vipdemo123")
+
+    async def upsert_demo_user(email: str, fallback_id: str, values: dict) -> str:
+        existing = await db.users.find_one({"email": email})
+        user_id = existing["id"] if existing else fallback_id
+        doc = {
+            "id": user_id,
+            "email": email,
+            "password_hash": hash_pw(password),
+            "status": "active",
+            "notif_prefs": NotifPrefsIn().model_dump(),
+            "updated_at": now_utc().isoformat(),
+            **values,
+        }
+        if existing:
+            await db.users.update_one({"id": user_id}, {"$set": doc})
+        else:
+            await db.users.insert_one({"created_at": now_utc().isoformat(), **doc})
+        return user_id
+
+    await upsert_demo_user("admin.demo@vipkidstest.com", "demo-admin-1", {
+        "name": "Demo Administrator",
+        "role": "admin",
+        "phone": "305-555-0000",
+    })
+    demo_fleet = [
+        ("Alexander Demo", "Ari Demo", "Hyundai", "Palisade", "B8UFT"),
+        ("Bianca Rivera", "Maya Rivera", "Cadillac", "Escalade", "VIP2KD"),
+        ("Carlos Bennett", "Noah Bennett", "Chevrolet", "Suburban", "VIP3KD"),
+        ("Diana Morales", "Luna Morales", "GMC", "Yukon XL", "VIP4KD"),
+        ("Ethan Collins", "Eli Collins", "Lincoln", "Navigator", "VIP5KD"),
+        ("Farah Williams", "Zoe Williams", "Mercedes-Benz", "GLS 580", "VIP6KD"),
+        ("Gabriel Stone", "Miles Stone", "Toyota", "Sequoia", "VIP7KD"),
+        ("Helena Cruz", "Sofia Cruz", "Lexus", "LX 600", "VIP8KD"),
+        ("Isaac Morgan", "Leo Morgan", "Jeep", "Wagoneer", "VIP9KD"),
+        ("Jasmine Lee", "Ava Lee", "Infiniti", "QX80", "VIP10K"),
+    ]
+    schools = [
+        "VIP Academy", "Pinecrest Prep", "Coral Gables Day School", "Brickell Scholars",
+        "Biscayne Grove Academy", "Sunset Preparatory", "Coconut Grove Collegiate",
+        "Design District Academy", "Key Biscayne School", "Aventura Learning Center",
+    ]
+    route_colors = ["#D4AF37", "#3B82F6", "#EF4444", "#10B981", "#A855F7", "#F97316", "#06B6D4", "#EC4899", "#84CC16", "#E5E7EB"]
+    base_lat = 25.76170
+    base_lng = -80.19180
+
+    for idx, (driver_name, child_name, make, model, plate) in enumerate(demo_fleet, start=1):
+        suffix = "" if idx == 1 else str(idx)
+        parent_email = f"parent{suffix}.demo@vipkidstest.com"
+        driver_email = f"driver{suffix}.demo@vipkidstest.com"
+        child_email = f"child{suffix}.demo@vipkidstest.com"
+        parent_id = await upsert_demo_user(parent_email, f"demo-parent-{idx}", {
+            "name": f"{child_name.split()[0]} Parent",
+            "role": "parent",
+            "phone": f"305-555-01{idx:02d}",
+            "address": f"{100 + idx} Demo Palm Ave, Miami, FL",
+        })
+        driver_id = await upsert_demo_user(driver_email, f"demo-driver-{idx}", {
+            "name": driver_name,
+            "role": "driver",
+            "phone": f"305-555-02{idx:02d}",
+            "photo_url": None,
+            "license_number": f"DEMO-DRIVER-{idx:03d}",
+            "license_expiry": f"2027-12-{min(20 + idx, 28):02d}",
+        })
+
+        vehicle_id = f"demo-vehicle-{idx}"
+        await db.vehicles.update_one(
+            {"id": vehicle_id},
+            {"$set": {
+                "id": vehicle_id,
+                "make": make,
+                "model": model,
+                "plate": plate,
+                "color": "Black",
+                "year": 2024 + (idx % 2),
+                "driver_id": driver_id,
+                "fleet_index": idx - 1,
+                "seats": 7,
+                "registration_date": "2026-01-01",
+                "registration_expiry": f"2027-{((idx - 1) % 9) + 1:02d}-01",
+                "insurance_expiry": f"2027-{((idx + 2) % 9) + 1:02d}-15",
+                "inspection_expiry": f"2027-{((idx + 4) % 9) + 1:02d}-20",
+                "updated_at": now_utc().isoformat(),
+            }},
+            upsert=True,
+        )
+
+        child_id = f"demo-child-{idx}"
+        school = schools[idx - 1]
+        await db.children.update_one(
+            {"id": child_id},
+            {"$set": {
+                "id": child_id,
+                "name": child_name,
+                "parent_id": parent_id,
+                "driver_id": driver_id,
+                "vehicle_id": vehicle_id,
+                "school": school,
+                "pickup_time": f"07:{20 + idx:02d}",
+                "dropoff_time": f"15:{10 + idx:02d}",
+                "home_address": f"{100 + idx} Demo Palm Ave, Miami, FL",
+                "school_address": f"{200 + idx} Academy Way, Miami, FL",
+                "grade": str((idx % 6) + 1),
+                "round_trip": True,
+                "emergency_contact_name": f"{child_name.split()[0]} Emergency Contact",
+                "emergency_contact_phone": f"305-555-03{idx:02d}",
+                "assignment_status": "assigned",
+                "created_at": now_utc().isoformat(),
+            }},
+            upsert=True,
+        )
+        await upsert_child_access(
+            child_id,
+            child_email,
+            password,
+            enabled=True,
+            confirmed_by=parent_id,
+        )
+
+        route_id = f"demo-route-{idx}"
+        await db.routes.update_one(
+            {"id": route_id},
+            {"$set": {
+                "id": route_id,
+                "name": f"VIP Route {idx:02d}",
+                "school": school,
+                "driver_id": driver_id,
+                "vehicle_id": vehicle_id,
+                "child_ids": [child_id],
+                "route_color": route_colors[idx - 1],
+                "notes": "Development demo route",
+                "updated_at": now_utc().isoformat(),
+            }},
+            upsert=True,
+        )
+
+        offset_lat = (idx - 1) * 0.006
+        offset_lng = (idx - 1) * 0.004
+        session_id = f"demo-live-session-{idx}"
+        demo_points = [
+            {"lat": base_lat + offset_lat, "lng": base_lng + offset_lng},
+            {"lat": base_lat + offset_lat + 0.0015, "lng": base_lng + offset_lng + 0.0031},
+            {"lat": base_lat + offset_lat + 0.0034, "lng": base_lng + offset_lng + 0.0062},
+            {"lat": base_lat + offset_lat + 0.0054, "lng": base_lng + offset_lng + 0.0096},
+        ]
+        await db.driver_locations.update_one(
+            {"driver_id": driver_id},
+            {"$set": {
+                "id": f"demo-location-{idx}",
+                "driver_id": driver_id,
+                "lat": demo_points[-1]["lat"],
+                "lng": demo_points[-1]["lng"],
+                "updated_at": now_utc().isoformat(),
+                "route_session_id": session_id,
+                "expires_at": now_utc() + timedelta(minutes=30),
+            }},
+            upsert=True,
+        )
+        await db.driver_route_plans.update_one(
+            {"driver_id": driver_id, "route_session_id": session_id},
+            {"$set": {
+                "driver_id": driver_id,
+                "route_session_id": session_id,
+                "phase": "morning",
+                "points": demo_points,
+                "expires_at": now_utc() + timedelta(minutes=30),
+                "created_at": now_utc().isoformat(),
+            }},
+            upsert=True,
+        )
+        await db.driver_route_points.delete_many({"driver_id": driver_id, "route_session_id": session_id})
+        await db.driver_route_points.insert_many([
+            {
+                "id": f"demo-route-point-{idx}-{point_idx}",
+                "driver_id": driver_id,
+                "route_session_id": session_id,
+                "lat": point["lat"],
+                "lng": point["lng"],
+                "recorded_at": (now_utc() - timedelta(seconds=(len(demo_points) - point_idx) * 5)).isoformat(),
+                "expires_at": now_utc() + timedelta(minutes=30),
+            }
+            for point_idx, point in enumerate(demo_points)
+        ])
 
 @app.on_event("startup")
 async def on_startup():
     await db.users.create_index("email", unique=True)
     await db.children.create_index("parent_id")
     await db.children.create_index("driver_id")
+    await db.driver_locations.create_index("driver_id", unique=True)
+    await db.driver_locations.create_index("expires_at", expireAfterSeconds=0)
+    await db.driver_route_points.create_index([("driver_id", 1), ("route_session_id", 1), ("recorded_at", 1)])
+    await db.driver_route_points.create_index("expires_at", expireAfterSeconds=0)
+    await db.driver_route_plans.create_index("expires_at", expireAfterSeconds=0)
+    await db.auth_rate_limits.create_index("expires_at", expireAfterSeconds=0)
     await migrate_statuses()
-    await seed_demo_data()
+    await remove_legacy_demo_data()
+    await ensure_admin()
+    await ensure_development_demo_accounts()
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -893,13 +1710,25 @@ async def on_shutdown():
 
 @api.get("/")
 async def root():
-    return {"service": "VIP KIDS TRANSPORTATION API", "status": "ok"}
+    return {"service": "VIP KIDS TRANSPORTATION API", "status": "ok", "environment": ENVIRONMENT}
+
+@api.get("/health/live")
+async def health_live():
+    return {"status": "ok"}
+
+@api.get("/health/ready")
+async def health_ready():
+    try:
+        await db.command("ping")
+    except Exception:
+        raise HTTPException(503, "Database unavailable")
+    return {"status": "ready"}
 
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )

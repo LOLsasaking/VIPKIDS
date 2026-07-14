@@ -1,0 +1,4 @@
+# Configure these in EAS as preview/production environment variables.
+EXPO_PUBLIC_BACKEND_URL=https://api.example.com
+EXPO_PUBLIC_ROUTING_BASE_URL=https://routing.example.com
+EXPO_PUBLIC_PRIVACY_CONTACT=privacy@example.com
