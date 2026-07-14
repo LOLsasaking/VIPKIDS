@@ -17,6 +17,9 @@ import os
 import uuid
 import logging
 import hashlib
+import json
+import asyncio
+import urllib.request
 
 ROOT = Path(__file__).parent
 
@@ -727,6 +730,51 @@ async def update_prefs(prefs: NotifPrefsIn, user: dict = Depends(current_user)):
     await db.users.update_one({"id": user["id"]}, {"$set": {"notif_prefs": prefs.model_dump()}})
     return {"ok": True, "notif_prefs": prefs.model_dump()}
 
+# ---------- Push notifications (Expo) ----------
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+
+class PushTokenIn(BaseModel):
+    token: str
+    platform: Optional[str] = None
+
+def _send_expo_push_sync(messages: list) -> None:
+    """Best-effort POST to Expo's push service. Runs in a thread; never raises."""
+    try:
+        req = urllib.request.Request(
+            EXPO_PUSH_URL,
+            data=json.dumps(messages).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception as exc:  # push is best-effort; app still shows the in-app notification
+        logger.warning("Expo push send failed: %s", exc)
+
+async def push_to_user(user_id: str, notif_type: str, title: str, body: str) -> None:
+    """Send a device push to one user, honoring their notif_prefs (mute_all + per-type toggle)."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "push_tokens": 1, "notif_prefs": 1})
+    if not user:
+        return
+    prefs = user.get("notif_prefs") or {}
+    if prefs.get("mute_all") or (notif_type in prefs and not prefs.get(notif_type, True)):
+        return
+    tokens = [t for t in (user.get("push_tokens") or []) if isinstance(t, str) and t.startswith("ExponentPushToken")]
+    if not tokens:
+        return
+    messages = [{
+        "to": t, "title": title, "body": body, "sound": "default",
+        "priority": "high", "channelId": "ride-updates", "data": {"type": notif_type},
+    } for t in tokens]
+    await asyncio.to_thread(_send_expo_push_sync, messages)
+
+@api.post("/auth/push-token")
+async def save_push_token(data: PushTokenIn, user: dict = Depends(current_user)):
+    token = data.token.strip()
+    if not token.startswith("ExponentPushToken"):
+        raise HTTPException(400, "Invalid Expo push token")
+    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"push_tokens": token}})
+    return {"ok": True}
+
 # ---------- Helpers to fetch joined data ----------
 async def _enrich_child(child: dict, include_child_account: bool = False) -> dict:
     driver = None
@@ -991,6 +1039,7 @@ async def driver_checkin(data: CheckEventIn, user: dict = Depends(require_role("
         "created_at": now_utc().isoformat(),
     }
     await db.notifications.insert_one(notif)
+    await push_to_user(child["parent_id"], data.event_type, notif["title"], notif["body"])
     await db.activity_events.insert_one({
         "id": new_id(), "source_event_id": ev["id"],
         "type": data.event_type,
@@ -1094,6 +1143,8 @@ async def route_start(data: RouteStartIn, user: dict = Depends(require_role("dri
         await db.events.insert_many(child_events)
     if parent_notifications:
         await db.notifications.insert_many(parent_notifications)
+        for n in parent_notifications:
+            await push_to_user(n["user_id"], "on_the_way", n["title"], n["body"])
     await db.activity_events.insert_one({
         "id": new_id(), "type": "route_started", "severity": "info",
         "title": f"{user['name']} started the route",
@@ -1154,6 +1205,8 @@ async def route_end(data: Optional[RouteEndIn] = None, user: dict = Depends(requ
     } for child in children]
     if notifications:
         await db.notifications.insert_many(notifications)
+        for n in notifications:
+            await push_to_user(n["user_id"], "arrived_home", n["title"], n["body"])
     return {"ok": True, "on_duty": False, "safety_check": safety.model_dump()}
 
 @api.post("/driver/emergency")

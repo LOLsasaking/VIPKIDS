@@ -67,6 +67,8 @@ export const Api = {
     }),
   me: () => api<any>('/auth/me'),
   updatePrefs: (prefs: any) => api('/auth/notif-prefs', { method: 'PUT', body: prefs }),
+  savePushToken: (token: string, platform: string) =>
+    api('/auth/push-token', { method: 'POST', body: { token, platform } }),
   updatePhoto: (photo_url: string) => api('/auth/photo', { method: 'PUT', body: { photo_url } }),
 
   // Parent

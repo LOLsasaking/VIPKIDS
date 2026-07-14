@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { storage } from '@/src/utils/storage';
 import { Api, TOKEN_KEY } from './api';
 import { clearQueuedCheckins } from './offlineCheckins';
+import { registerAndSyncPushToken } from './push';
 
 type User = {
   id: string;
@@ -48,6 +49,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  // Register this device for ride push notifications whenever a user is signed in.
+  useEffect(() => {
+    if (user) registerAndSyncPushToken();
+  }, [user?.id]);
 
   const login = async (email: string, password: string) => {
     const res = await Api.login(email, password);
