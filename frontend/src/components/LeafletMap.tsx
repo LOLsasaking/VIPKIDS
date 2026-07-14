@@ -129,7 +129,7 @@ function buildHtml(markers: MapMarker[], center: MapPoint, routes: MapRoute[], z
   return `<!DOCTYPE html>
   <html><head><meta name="viewport" content="initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; img-src data: blob: file: http: https:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQ3ynhHsLQPjdmcYd3Zk+Kec0q3ztpBvo=" crossorigin="anonymous"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous"/>
   <style>
     html,body,#map{height:100%;margin:0;background:#F2F1ED;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
     .leaflet-container{cursor:${interactive ? 'crosshair' : 'grab'}}
