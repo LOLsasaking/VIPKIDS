@@ -7,11 +7,53 @@ import { Api } from '@/src/api';
 import LeafletMap from '@/src/components/LeafletMap';
 import { C, S, T, Fonts } from '@/src/theme';
 
+type LatLng = { lat: number; lng: number };
+
+// Stable, distinct route color per driver (hashed onto a fixed palette).
+const LINE_PALETTE = ['#D4AF37', '#4F9DFF', '#FF6B6B', '#22C55E', '#A855F7', '#F97316', '#14B8A6', '#EC4899'];
+function driverColor(id?: string): string {
+  if (!id) return LINE_PALETTE[0];
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return LINE_PALETTE[h % LINE_PALETTE.length];
+}
+
+// Free, no-key services: Nominatim geocodes the address, OSRM returns a
+// road-following driving route. Geocodes are cached per address.
+const geocodeCache: Record<string, LatLng | null> = {};
+
+async function geocode(address: string): Promise<LatLng | null> {
+  if (address in geocodeCache) return geocodeCache[address];
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`,
+      { headers: { Accept: 'application/json' } },
+    );
+    const j = await r.json();
+    const hit = j?.[0] ? { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon) } : null;
+    geocodeCache[address] = hit;
+    return hit;
+  } catch { return null; }
+}
+
+async function roadRoute(from: LatLng, to: LatLng): Promise<LatLng[] | null> {
+  try {
+    const r = await fetch(
+      `https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`,
+    );
+    const j = await r.json();
+    const coords: number[][] | undefined = j?.routes?.[0]?.geometry?.coordinates;
+    return coords ? coords.map((c) => ({ lat: c[1], lng: c[0] })) : null;
+  } catch { return null; }
+}
+
 export default function ParentMap() {
   const params = useLocalSearchParams<{ childId?: string }>();
   const [children, setChildren] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [track, setTrack] = useState<any>(null);
+  const [path, setPath] = useState<LatLng[]>([]);
+  const [dest, setDest] = useState<{ lat: number; lng: number; name: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const interval = useRef<any>(null);
 
@@ -25,8 +67,26 @@ export default function ParentMap() {
 
   const refresh = useCallback(async () => {
     if (!selected) return;
-    try { const t = await Api.parentTrack(selected); setTrack(t); } catch {}
+    try {
+      const t = await Api.parentTrack(selected);
+      setTrack(t);
+      const l = t?.location;
+      const ch = t?.child;
+      if (!l || !ch) { setPath([]); setDest(null); return; }
+      // demo heuristic: headed home once they've left school, otherwise to school
+      const returning = (t.events || []).some((e: any) =>
+        ['leaving_school', 'arriving_home'].includes(e.event_type));
+      const destAddr = returning ? ch.home_address : ch.school_address;
+      const d = destAddr ? await geocode(destAddr) : null;
+      if (!d) { setPath([]); setDest(null); return; }
+      setDest({ ...d, name: returning ? 'Home' : (ch.school || 'School') });
+      const route = await roadRoute({ lat: l.lat, lng: l.lng }, d);
+      setPath(route && route.length > 1 ? route : []);
+    } catch {}
   }, [selected]);
+
+  // Reset when switching child.
+  useEffect(() => { setPath([]); setDest(null); }, [selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -41,7 +101,11 @@ export default function ParentMap() {
 
   const loc = track?.location;
   const child = track?.child;
-  const markers = loc ? [{ lat: loc.lat, lng: loc.lng, label: `${child?.driver?.name || 'Driver'} · ${child?.vehicle?.make || ''}`, color: C.gold }] : [];
+  const lineColor = driverColor(child?.driver?.id);
+  const markers = loc ? [
+    { lat: loc.lat, lng: loc.lng, label: `${child?.driver?.name || 'Driver'} · ${child?.vehicle?.make || ''}`, color: lineColor, car: true },
+    ...(dest ? [{ lat: dest.lat, lng: dest.lng, label: dest.name, color: lineColor }] : []),
+  ] : [];
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
@@ -67,6 +131,8 @@ export default function ParentMap() {
         <View style={{ marginTop: S.md }} testID="live-map">
           <LeafletMap
             markers={markers}
+            path={path}
+            lineColor={lineColor}
             center={loc ? { lat: loc.lat, lng: loc.lng } : undefined}
             zoom={14}
             height={360}

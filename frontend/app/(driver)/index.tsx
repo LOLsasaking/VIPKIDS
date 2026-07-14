@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Alert,
-  ActivityIndicator, RefreshControl, Platform,
+  ActivityIndicator, RefreshControl, Platform, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
@@ -33,6 +33,19 @@ export default function DriverHome() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Google Maps directions through every stop: pick up each home, then the school.
+  const openRouteInMaps = (list: any[]) => {
+    const stops: string[] = [];
+    list.forEach((k) => { if (k.home_address) stops.push(k.home_address); });
+    list.forEach((k) => { if (k.school_address && !stops.includes(k.school_address)) stops.push(k.school_address); });
+    if (stops.length === 0) return;
+    const destination = stops[stops.length - 1];
+    const waypoints = stops.slice(0, -1).map(encodeURIComponent).join('|');
+    const url = `https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=${encodeURIComponent(destination)}` +
+      (waypoints ? `&waypoints=${waypoints}` : '');
+    Linking.openURL(url).catch(() => Alert.alert('Error', 'Could not open Google Maps.'));
+  };
+
   const startRoute = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -58,6 +71,7 @@ export default function DriverHome() {
       await tick();
       locInterval.current = setInterval(tick, 5000);
       await refresh();
+      openRouteInMaps(kids); // launch turn-by-turn navigation for today's stops
     } catch (e: any) { Alert.alert('Error', e.message); }
   };
 
