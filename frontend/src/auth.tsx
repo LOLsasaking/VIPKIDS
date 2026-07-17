@@ -5,7 +5,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { storage } from '@/src/utils/storage';
 import { Api, TOKEN_KEY } from './api';
 import { clearQueuedCheckins } from './offlineCheckins';
-import { registerAndSyncPushToken } from './push';
+import { registerForPushNotificationsAsync } from './pushNotifications';
 
 type User = {
   id: string;
@@ -32,33 +32,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const syncPushToken = useCallback(async () => {
+    try {
+      const registration = await registerForPushNotificationsAsync();
+      if (registration) await Api.registerPushToken(registration);
+    } catch (error) {
+      console.warn('Push notification registration failed', error);
+    }
+  }, []);
+
   const bootstrap = useCallback(async () => {
     const token = await storage.secureGet(TOKEN_KEY, '');
     if (token) {
       try {
         const me = await Api.me();
         setUser(me);
+        syncPushToken();
       } catch {
         await storage.secureRemove(TOKEN_KEY);
         setUser(null);
       }
     }
     setLoading(false);
-  }, []);
+  }, [syncPushToken]);
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
 
-  // Register this device for ride push notifications whenever a user is signed in.
-  useEffect(() => {
-    if (user) registerAndSyncPushToken();
-  }, [user?.id]);
-
   const login = async (email: string, password: string) => {
     const res = await Api.login(email, password);
     await storage.secureSet(TOKEN_KEY, res.access_token);
     setUser(res.user);
+    syncPushToken();
     return res.user as User;
   };
 

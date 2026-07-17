@@ -10,6 +10,8 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional, Literal
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import asyncio
+import json
 import jwt
 from jwt import InvalidTokenError
 import bcrypt
@@ -17,9 +19,8 @@ import os
 import uuid
 import logging
 import hashlib
-import json
-import asyncio
 import urllib.request
+import urllib.error
 
 ROOT = Path(__file__).parent
 
@@ -46,6 +47,7 @@ JWT_ALGO = "HS256"
 JWT_TTL_HOURS = int(os.environ.get("JWT_TTL_HOURS", "12"))
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").strip().lower()
 GPS_RETENTION_DAYS = int(os.environ.get("GPS_RETENTION_DAYS", "30"))
+EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL", "https://exp.host/--/api/v2/push/send")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "gonxander@gmail.com").strip().lower()
 ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 ALLOWED_ORIGINS = [
@@ -192,6 +194,100 @@ def restricted_child_view(child: dict) -> dict:
     )
     return {key: child.get(key) for key in allowed if child.get(key) is not None}
 
+def notification_pref_key(notification_type: Optional[str]) -> Optional[str]:
+    if notification_type == "announcement":
+        return "announcements"
+    return notification_type
+
+def is_expo_push_token(token: str) -> bool:
+    return token.startswith("ExpoPushToken[") or token.startswith("ExponentPushToken[")
+
+async def send_push_notifications(notifications: List[dict]) -> None:
+    """Best-effort OS push fan-out for notifications already persisted in-app."""
+    if not notifications:
+        return
+    user_ids = sorted({n.get("user_id") for n in notifications if n.get("user_id")})
+    if not user_ids:
+        return
+    users = {
+        u["id"]: u
+        for u in await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "notif_prefs": 1}).to_list(1000)
+    }
+    push_tokens = await db.push_tokens.find(
+        {"user_id": {"$in": user_ids}, "disabled": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(2000)
+    tokens_by_user: dict[str, list[str]] = {}
+    for token_doc in push_tokens:
+        token = token_doc.get("token", "")
+        if is_expo_push_token(token):
+            tokens_by_user.setdefault(token_doc["user_id"], []).append(token)
+
+    messages = []
+    for notif in notifications:
+        recipient = users.get(notif.get("user_id"))
+        prefs = (recipient or {}).get("notif_prefs") or {}
+        pref_key = notification_pref_key(notif.get("type"))
+        if prefs.get("mute_all") or (pref_key and prefs.get(pref_key) is False):
+            continue
+        for token in tokens_by_user.get(notif.get("user_id"), []):
+            messages.append({
+                "to": token,
+                "title": str(notif.get("title") or "VIP Kids Transportation")[:120],
+                "body": str(notif.get("body") or "")[:240],
+                "sound": "default",
+                "priority": "high",
+                "channelId": "vipkids-safety",
+                "data": {
+                    "id": notif.get("id"),
+                    "type": notif.get("type"),
+                    "user_id": notif.get("user_id"),
+                },
+            })
+    if not messages:
+        return
+
+    def post_chunk(chunk: list[dict]) -> dict:
+        payload = json.dumps(chunk).encode("utf-8")
+        request = urllib.request.Request(
+            EXPO_PUSH_URL,
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    for start in range(0, len(messages), 100):
+        chunk = messages[start:start + 100]
+        try:
+            result = await asyncio.to_thread(post_chunk, chunk)
+            tickets = result.get("data", []) if isinstance(result, dict) else []
+            stale_tokens = [
+                chunk[index]["to"]
+                for index, ticket in enumerate(tickets)
+                if isinstance(ticket, dict)
+                and ticket.get("status") == "error"
+                and (ticket.get("details") or {}).get("error") == "DeviceNotRegistered"
+            ]
+            if stale_tokens:
+                await db.push_tokens.update_many({"token": {"$in": stale_tokens}}, {"$set": {"disabled": True}})
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            log.warning("Expo push send failed: %s", exc)
+
+async def persist_notifications(notifications: List[dict]) -> None:
+    if notifications:
+        await db.notifications.insert_many(notifications)
+        await send_push_notifications(notifications)
+
+async def persist_notification(notification: dict) -> None:
+    await db.notifications.insert_one(notification)
+    await send_push_notifications([notification])
+
 # ---------- Models ----------
 class AccessRequestIn(BaseModel):
     email: EmailStr
@@ -314,6 +410,10 @@ class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     child_id: Optional[str] = Field(default=None, max_length=100)
 
+class PushTokenIn(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+    platform: Literal["android", "ios", "web", "unknown"] = "unknown"
+
 class ScheduleRequestIn(BaseModel):
     child_id: str
     request_type: Literal["after_school_activity", "medical_appointment", "temporary_change"]
@@ -351,6 +451,7 @@ async def delete_service_account(user: dict) -> None:
 
     await db.messages.delete_many({"$or": [{"from_user_id": user_id}, {"to_user_id": user_id}]})
     await db.notifications.delete_many({"user_id": user_id})
+    await db.push_tokens.delete_many({"user_id": user_id})
 
     if role == "parent":
         children = await db.children.find({"parent_id": user_id}, {"_id": 0, "id": 1}).to_list(100)
@@ -482,6 +583,32 @@ async def delete_account(data: DeleteAccountIn, request: Request):
 @api.get("/auth/me")
 async def me(user: dict = Depends(current_user)):
     return user
+
+@api.post("/push/register")
+async def register_push_token(data: PushTokenIn, user: dict = Depends(current_user)):
+    if not is_expo_push_token(data.token):
+        raise HTTPException(400, "Unsupported push token")
+    now = now_utc().isoformat()
+    await db.push_tokens.update_one(
+        {"user_id": user["id"], "token": data.token},
+        {"$set": {
+            "user_id": user["id"],
+            "token": data.token,
+            "platform": data.platform,
+            "disabled": False,
+            "updated_at": now,
+        }, "$setOnInsert": {"id": new_id(), "created_at": now}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+@api.post("/push/unregister")
+async def unregister_push_token(data: PushTokenIn, user: dict = Depends(current_user)):
+    await db.push_tokens.update_one(
+        {"user_id": user["id"], "token": data.token},
+        {"$set": {"disabled": True, "updated_at": now_utc().isoformat()}},
+    )
+    return {"ok": True}
 
 class PhotoIn(BaseModel):
     photo_url: str = Field(min_length=1, max_length=2_000_000)
@@ -730,51 +857,6 @@ async def update_prefs(prefs: NotifPrefsIn, user: dict = Depends(current_user)):
     await db.users.update_one({"id": user["id"]}, {"$set": {"notif_prefs": prefs.model_dump()}})
     return {"ok": True, "notif_prefs": prefs.model_dump()}
 
-# ---------- Push notifications (Expo) ----------
-EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
-
-class PushTokenIn(BaseModel):
-    token: str
-    platform: Optional[str] = None
-
-def _send_expo_push_sync(messages: list) -> None:
-    """Best-effort POST to Expo's push service. Runs in a thread; never raises."""
-    try:
-        req = urllib.request.Request(
-            EXPO_PUSH_URL,
-            data=json.dumps(messages).encode(),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=10).read()
-    except Exception as exc:  # push is best-effort; app still shows the in-app notification
-        logger.warning("Expo push send failed: %s", exc)
-
-async def push_to_user(user_id: str, notif_type: str, title: str, body: str) -> None:
-    """Send a device push to one user, honoring their notif_prefs (mute_all + per-type toggle)."""
-    user = await db.users.find_one({"id": user_id}, {"_id": 0, "push_tokens": 1, "notif_prefs": 1})
-    if not user:
-        return
-    prefs = user.get("notif_prefs") or {}
-    if prefs.get("mute_all") or (notif_type in prefs and not prefs.get(notif_type, True)):
-        return
-    tokens = [t for t in (user.get("push_tokens") or []) if isinstance(t, str) and t.startswith("ExponentPushToken")]
-    if not tokens:
-        return
-    messages = [{
-        "to": t, "title": title, "body": body, "sound": "default",
-        "priority": "high", "channelId": "ride-updates", "data": {"type": notif_type},
-    } for t in tokens]
-    await asyncio.to_thread(_send_expo_push_sync, messages)
-
-@api.post("/auth/push-token")
-async def save_push_token(data: PushTokenIn, user: dict = Depends(current_user)):
-    token = data.token.strip()
-    if not token.startswith("ExponentPushToken"):
-        raise HTTPException(400, "Invalid Expo push token")
-    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"push_tokens": token}})
-    return {"ok": True}
-
 # ---------- Helpers to fetch joined data ----------
 async def _enrich_child(child: dict, include_child_account: bool = False) -> dict:
     driver = None
@@ -848,7 +930,7 @@ async def parent_create_child(data: ParentChildIn, user: dict = Depends(require_
         "created_at": now_utc().isoformat(),
     } for admin in admins]
     if notifications:
-        await db.notifications.insert_many(notifications)
+        await persist_notifications(notifications)
     clean_doc = {k: v for k, v in doc.items() if k != "_id"}
     return {**await _enrich_child(clean_doc), "child_account": child_account}
 
@@ -976,7 +1058,7 @@ async def child_ready(user: dict = Depends(require_role("child"))):
         "read": False, "created_at": now_utc().isoformat(),
     } for recipient in recipients]
     if notifications:
-        await db.notifications.insert_many(notifications)
+        await persist_notifications(notifications)
     await db.activity_events.insert_one({
         "id": new_id(), "event_type": "child_ready", "child_id": child["id"],
         "driver_id": child.get("driver_id"), "title": f"{child['name']} is ready",
@@ -1038,8 +1120,7 @@ async def driver_checkin(data: CheckEventIn, user: dict = Depends(require_role("
         "read": False,
         "created_at": now_utc().isoformat(),
     }
-    await db.notifications.insert_one(notif)
-    await push_to_user(child["parent_id"], data.event_type, notif["title"], notif["body"])
+    await persist_notification(notif)
     await db.activity_events.insert_one({
         "id": new_id(), "source_event_id": ev["id"],
         "type": data.event_type,
@@ -1142,9 +1223,7 @@ async def route_start(data: RouteStartIn, user: dict = Depends(require_role("dri
     if child_events:
         await db.events.insert_many(child_events)
     if parent_notifications:
-        await db.notifications.insert_many(parent_notifications)
-        for n in parent_notifications:
-            await push_to_user(n["user_id"], "on_the_way", n["title"], n["body"])
+        await persist_notifications(parent_notifications)
     await db.activity_events.insert_one({
         "id": new_id(), "type": "route_started", "severity": "info",
         "title": f"{user['name']} started the route",
@@ -1204,9 +1283,7 @@ async def route_end(data: Optional[RouteEndIn] = None, user: dict = Depends(requ
         "read": False, "created_at": ended_at,
     } for child in children]
     if notifications:
-        await db.notifications.insert_many(notifications)
-        for n in notifications:
-            await push_to_user(n["user_id"], "arrived_home", n["title"], n["body"])
+        await persist_notifications(notifications)
     return {"ok": True, "on_duty": False, "safety_check": safety.model_dump()}
 
 @api.post("/driver/emergency")
@@ -1227,7 +1304,7 @@ async def driver_emergency(data: EmergencyIn, user: dict = Depends(require_role(
         "lat": data.lat, "lng": data.lng, "created_at": created_at,
     } for admin in admins]
     if notifications:
-        await db.notifications.insert_many(notifications)
+        await persist_notifications(notifications)
     return {
         "ok": True,
         "alerted_admins": len(admins),
@@ -1301,6 +1378,16 @@ async def chat_send(data: MessageIn, user: dict = Depends(current_user)):
     recipient = await db.users.find_one({"id": data.to_user_id}, {"_id": 0, "password_hash": 0})
     if recipient and {user.get("role"), recipient.get("role")} == {"parent", "driver"}:
         child = await db.children.find_one({"id": data.child_id}, {"_id": 0, "name": 1}) if data.child_id else None
+        await persist_notification({
+            "id": new_id(),
+            "user_id": recipient["id"],
+            "type": "message",
+            "title": f"Message from {user['name']}",
+            "body": text,
+            "child_id": data.child_id,
+            "read": False,
+            "created_at": msg["created_at"],
+        })
         await db.activity_events.insert_one({
             "id": new_id(), "type": "message", "severity": "info",
             "title": f"Message from {user['name']} to {recipient['name']}",
@@ -1461,7 +1548,7 @@ async def admin_announce(data: AnnouncementIn, user: dict = Depends(require_role
         "created_at": now_utc().isoformat(),
     } for p in parents]
     if notifs:
-        await db.notifications.insert_many(notifs)
+        await persist_notifications(notifs)
     return doc
 
 @api.get("/admin/schedule-requests")
