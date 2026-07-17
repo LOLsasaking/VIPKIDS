@@ -1,0 +1,97 @@
+{
+  "project_info": {
+    "project_number": "418526082112",
+    "project_id": "vipkidride",
+    "storage_bucket": "vipkidride.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:418526082112:android:4e06b16c3dd0e186619ba5",
+        "android_client_info": {
+          "package_name": "VIPkidstransportation.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3JD1Qv5aKKSOFra0XQ8Sx1DoCcAqb2O8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:418526082112:android:43ccb4396ebc9483619ba5",
+        "android_client_info": {
+          "package_name": "com.mycompany.kidtransportapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3JD1Qv5aKKSOFra0XQ8Sx1DoCcAqb2O8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:418526082112:android:6d07ddcb4890ed85619ba5",
+        "android_client_info": {
+          "package_name": "com.vipkidstransportation.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC3JD1Qv5aKKSOFra0XQ8Sx1DoCcAqb2O8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "418526082112-23b6jute2fleo7oamrvr7um87c9budj3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

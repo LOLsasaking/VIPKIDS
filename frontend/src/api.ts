@@ -5,6 +5,7 @@
 import { storage } from '@/src/utils/storage';
 
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
+const ALLOW_INSECURE_HTTP = process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
 const API = `${BASE}/api`;
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -18,7 +19,7 @@ export type ApiOptions = {
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<T> {
   if (!BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
-  if (!__DEV__ && !BASE.startsWith('https://')) {
+  if (!__DEV__ && !ALLOW_INSECURE_HTTP && !BASE.startsWith('https://')) {
     throw new Error('VIP Kids requires a secure HTTPS connection in production.');
   }
   const { method = 'GET', body, auth = true } = opts;
