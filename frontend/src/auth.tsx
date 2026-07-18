@@ -4,6 +4,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { storage } from '@/src/utils/storage';
 import { Api, TOKEN_KEY } from './api';
+import { DemoRole, demoRoleForCredentials, demoRoleFromToken, demoTokenFor, getDemoUser, isDemoToken } from './demo';
 import { clearQueuedCheckins } from './offlineCheckins';
 import { registerForPushNotificationsAsync } from './pushNotifications';
 
@@ -22,6 +23,7 @@ type AuthCtx = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
+  demoLogin: (role: DemoRole) => Promise<User>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -42,8 +44,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const bootstrap = useCallback(async () => {
-    const token = await storage.secureGet(TOKEN_KEY, '');
+    const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
     if (token) {
+      if (isDemoToken(token)) {
+        setUser(getDemoUser(demoRoleFromToken(token)) as User);
+        setLoading(false);
+        return;
+      }
       try {
         const me = await Api.me();
         setUser(me);
@@ -61,11 +68,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap]);
 
   const login = async (email: string, password: string) => {
+    const demoRole = demoRoleForCredentials(email, password);
+    if (demoRole) return demoLogin(demoRole);
+
     const res = await Api.login(email, password);
     await storage.secureSet(TOKEN_KEY, res.access_token);
     setUser(res.user);
     syncPushToken();
     return res.user as User;
+  };
+
+  const demoLogin = async (role: DemoRole) => {
+    const demoUser = getDemoUser(role) as User;
+    await storage.secureSet(TOKEN_KEY, demoTokenFor(role));
+    setUser(demoUser);
+    return demoUser;
   };
 
   const logout = async () => {
@@ -76,6 +93,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = async () => {
     try {
+      const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
+      if (isDemoToken(token)) {
+        setUser(getDemoUser(demoRoleFromToken(token)) as User);
+        return;
+      }
       const me = await Api.me();
       setUser(me);
     } catch {
@@ -84,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ user, loading, login, logout, refresh }}>
+    <Ctx.Provider value={{ user, loading, login, demoLogin, logout, refresh }}>
       {children}
     </Ctx.Provider>
   );

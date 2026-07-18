@@ -3,6 +3,7 @@
  * Wraps fetch with auto-Bearer-token + JSON helpers.
  */
 import { storage } from '@/src/utils/storage';
+import { demoApiResponse, isDemoToken } from './demo';
 
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
 const ALLOW_INSECURE_HTTP = process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
@@ -18,6 +19,10 @@ export type ApiOptions = {
 };
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<T> {
+  const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
+  if (opts.auth !== false && isDemoToken(token)) {
+    return demoApiResponse(path, opts, token) as T;
+  }
   if (!BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
   if (!__DEV__ && !ALLOW_INSECURE_HTTP && !BASE.startsWith('https://')) {
     throw new Error('VIP Kids requires a secure HTTPS connection in production.');
@@ -25,7 +30,6 @@ export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise
   const { method = 'GET', body, auth = true } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth) {
-    const token = await storage.secureGet(TOKEN_KEY, '');
     if (token) headers.Authorization = `Bearer ${token}`;
   }
   const controller = new AbortController();

@@ -15,11 +15,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowRight, CarFront, ShieldCheck, User, UserRound, Users } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import BrandLogo from '@/src/components/BrandLogo';
+import { DEMO_PASSWORD } from '@/src/demo';
 import { C, Fonts, T } from '@/src/theme';
 
 type DemoRole = 'parent' | 'driver' | 'child' | 'admin';
 
-const DEMO_PASSWORD = 'vipdemo123';
 const SHOW_DEMO_ACCOUNTS = __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS === 'true' || process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
 const DEMO_ACCOUNTS: Array<{
   role: DemoRole;
@@ -35,7 +35,7 @@ const DEMO_ACCOUNTS: Array<{
 
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, demoLogin } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -67,7 +67,7 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      continueWith((await login(demo.email, DEMO_PASSWORD)).role);
+      continueWith((await demoLogin(demo.role)).role);
     } catch (err: any) {
       setError(err.message || `Could not open the ${demo.label} demo.`);
     } finally {
@@ -124,7 +124,7 @@ export default function Login() {
             {SHOW_DEMO_ACCOUNTS ? (
               <>
                 <View style={styles.dividerRow}><View style={styles.divider} /><Text style={styles.dividerText}>TEST DEMOS</Text><View style={styles.divider} /></View>
-                <Text style={styles.demoHint}>Tap a role to sign in automatically. Demo password: {DEMO_PASSWORD}</Text>
+                <Text style={styles.demoHint}>Tap a role to open a built-in demo instantly. Manual demo password: {DEMO_PASSWORD}</Text>
                 <View style={styles.demoGrid}>
                   {DEMO_ACCOUNTS.map((demo) => {
                     const Icon = demo.Icon;
