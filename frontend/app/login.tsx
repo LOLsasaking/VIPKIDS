@@ -20,6 +20,7 @@ import { C, Fonts, T } from '@/src/theme';
 type DemoRole = 'parent' | 'driver' | 'child' | 'admin';
 
 const DEMO_PASSWORD = 'vipdemo123';
+const SHOW_DEMO_ACCOUNTS = __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS === 'true' || process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
 const DEMO_ACCOUNTS: Array<{
   role: DemoRole;
   label: string;
@@ -120,9 +121,10 @@ export default function Login() {
               {busy ? <ActivityIndicator color={C.bg} /> : <><Text style={styles.primaryText}>Sign in</Text><ArrowRight size={20} color={C.bg} /></>}
             </Pressable>
 
-            {__DEV__ ? (
+            {SHOW_DEMO_ACCOUNTS ? (
               <>
                 <View style={styles.dividerRow}><View style={styles.divider} /><Text style={styles.dividerText}>TEST DEMOS</Text><View style={styles.divider} /></View>
+                <Text style={styles.demoHint}>Tap a role to sign in automatically. Demo password: {DEMO_PASSWORD}</Text>
                 <View style={styles.demoGrid}>
                   {DEMO_ACCOUNTS.map((demo) => {
                     const Icon = demo.Icon;
@@ -191,6 +193,7 @@ const styles = StyleSheet.create({
   divider: { height: 1, flex: 1, backgroundColor: C.border },
   dividerText: { color: C.textMuted, fontFamily: Fonts.bodySemiBold, fontSize: 9, letterSpacing: 1.4 },
   demoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  demoHint: { color: C.textMuted, fontFamily: Fonts.body, fontSize: 10, lineHeight: 14, marginTop: -4, marginBottom: 2, textAlign: 'center' },
   demoButton: { width: '48.5%', minHeight: 48, borderRadius: 10, borderWidth: 1, borderColor: C.goldMuted, backgroundColor: 'rgba(212,175,55,.08)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   demoLabel: { color: C.gold, fontFamily: Fonts.bodySemiBold, fontSize: 12, letterSpacing: 0.9 },
   secondary: { minHeight: 66, borderRadius: 12, borderWidth: 1, borderColor: C.border, backgroundColor: C.bgSecondary, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14 },
