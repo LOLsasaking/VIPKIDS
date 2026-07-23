@@ -15,12 +15,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowRight, CarFront, ShieldCheck, User, UserRound, Users } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import BrandLogo from '@/src/components/BrandLogo';
-import { DEMO_PASSWORD } from '@/src/demo';
+import { DEMO_PASSWORD, demoModeEnabled } from '@/src/demo';
 import { C, Fonts, T } from '@/src/theme';
 
 type DemoRole = 'parent' | 'driver' | 'child' | 'admin';
 
-const SHOW_DEMO_ACCOUNTS = __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS === 'true' || process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
+const SHOW_DEMO_ACCOUNTS = demoModeEnabled();
 const DEMO_ACCOUNTS: Array<{
   role: DemoRole;
   label: string;

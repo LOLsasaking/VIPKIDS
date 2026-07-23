@@ -4,7 +4,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { storage } from '@/src/utils/storage';
 import { Api, TOKEN_KEY } from './api';
-import { DemoRole, demoRoleForCredentials, demoRoleFromToken, demoTokenFor, getDemoUser, isDemoToken } from './demo';
+import { DemoRole, demoModeEnabled, demoRoleForCredentials, demoRoleFromToken, demoTokenFor, getDemoUser, isDemoToken } from './demo';
 import { clearQueuedCheckins } from './offlineCheckins';
 import { registerForPushNotificationsAsync } from './pushNotifications';
 
@@ -46,11 +46,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const bootstrap = useCallback(async () => {
     const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
     if (token) {
-      if (isDemoToken(token)) {
+      if (isDemoToken(token) && demoModeEnabled()) {
         setUser(getDemoUser(demoRoleFromToken(token)) as User);
         setLoading(false);
         return;
       }
+      if (isDemoToken(token)) await storage.secureRemove(TOKEN_KEY);
       try {
         const me = await Api.me();
         setUser(me);
@@ -68,7 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrap]);
 
   const login = async (email: string, password: string) => {
-    const demoRole = demoRoleForCredentials(email, password);
+    const demoRole = demoModeEnabled() ? demoRoleForCredentials(email, password) : null;
     if (demoRole) return demoLogin(demoRole);
 
     const res = await Api.login(email, password);
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const demoLogin = async (role: DemoRole) => {
+    if (!demoModeEnabled()) throw new Error('Demo accounts are unavailable in this build.');
     const demoUser = getDemoUser(role) as User;
     await storage.secureSet(TOKEN_KEY, demoTokenFor(role));
     setUser(demoUser);
@@ -94,8 +96,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = async () => {
     try {
       const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
-      if (isDemoToken(token)) {
+      if (isDemoToken(token) && demoModeEnabled()) {
         setUser(getDemoUser(demoRoleFromToken(token)) as User);
+        return;
+      }
+      if (isDemoToken(token)) {
+        await storage.secureRemove(TOKEN_KEY);
+        setUser(null);
         return;
       }
       const me = await Api.me();

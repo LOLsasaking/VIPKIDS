@@ -4,6 +4,12 @@ export const DEMO_TOKEN_PREFIX = 'vipkids_demo_token:';
 export const DEMO_USER_KEY = 'vipkids_demo_user';
 export const DEMO_PASSWORD = 'vipdemo123';
 
+// Demo data is useful for preview builds, but must never be a bypass in a
+// production store build. Enable it explicitly in a preview EAS environment.
+export function demoModeEnabled() {
+  return __DEV__ || process.env.EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS === 'true';
+}
+
 const nowIso = () => new Date().toISOString();
 
 const routeColors = ['#D4AF37', '#35D0BA', '#7C5CFF', '#FF8A3D', '#4F8CFF', '#2ECC71', '#FF5C8A', '#B978FF', '#00A8E8', '#F5C542'];

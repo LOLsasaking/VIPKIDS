@@ -7,6 +7,9 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS": "true"
+      },
       "autoIncrement": true,
       "android": {
         "buildType": "apk"
@@ -14,7 +17,10 @@
     },
     "production": {
       "autoIncrement": true,
-      "environment": "production"
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS": "false"
+      }
     }
   },
   "submit": {

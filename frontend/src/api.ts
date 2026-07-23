@@ -3,7 +3,7 @@
  * Wraps fetch with auto-Bearer-token + JSON helpers.
  */
 import { storage } from '@/src/utils/storage';
-import { demoApiResponse, isDemoToken } from './demo';
+import { demoApiResponse, demoModeEnabled, isDemoToken } from './demo';
 
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
 const ALLOW_INSECURE_HTTP = process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
@@ -20,7 +20,7 @@ export type ApiOptions = {
 
 export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise<T> {
   const token = (await storage.secureGet(TOKEN_KEY, '')) || '';
-  if (opts.auth !== false && isDemoToken(token)) {
+  if (opts.auth !== false && demoModeEnabled() && isDemoToken(token)) {
     return demoApiResponse(path, opts, token) as T;
   }
   if (!BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
