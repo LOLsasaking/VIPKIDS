@@ -17,9 +17,10 @@ the demo environment.
 
 ## Required before production data
 
-- [ ] Create the Supabase project and apply the supplied schema/RLS migration.
-- [ ] Implement and deploy the trusted Edge Functions listed in
-  `supabase/README.md`; never expose a service-role key in the app.
+- [ ] Provision the production database. The shipping backend uses **MongoDB**
+  (`MONGO_URL`) — MongoDB Atlas is the zero-code-change option. A Postgres/Supabase
+  alternative is designed but NOT active; see
+  `docs/future-supabase-migration/` (adopting it means rewriting `backend/server.py`).
 - [ ] Configure a production HTTPS API and HTTPS routing provider. Route/home/
   school addresses must never be sent to an unapproved public routing service.
 - [ ] Replace all preview `http://` build variables with production `https://`

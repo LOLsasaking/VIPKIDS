@@ -1,4 +1,14 @@
-# VIP Kids Transportation — Supabase production setup
+# VIP Kids Transportation — Supabase migration design (NOT ACTIVE)
+
+> **⚠️ This is a design proposal, not the live database.**
+>
+> The shipping backend runs on **MongoDB** (`backend/server.py`, via `MONGO_URL`). Nothing in the
+> app or backend reads Supabase, and no Supabase client library is installed. These files were
+> moved out of `supabase/` so they are not mistaken for an applied migration.
+>
+> Kept because the Row Level Security policies are a useful access-control reference for the
+> children's-data legal review. Adopting this means rewriting every query in `backend/server.py` —
+> a future project, not a launch task.
 
 This directory contains the production database design for VIP Kids Transportation.
 It uses Supabase Auth for sign-in and Postgres Row Level Security (RLS) for data
