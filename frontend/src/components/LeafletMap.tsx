@@ -152,6 +152,17 @@ function buildHtml(markers: MapMarker[], center: MapPoint, routes: MapRoute[], z
     function safeText(value){const node=document.createElement('span');node.textContent=String(value||'');return node}
     const map=L.map('map',{zoomControl:false,attributionControl:true,doubleClickZoom:false}).setView([${center.lat},${center.lng}],${zoom});
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+    function fixMapSize(){
+      map.invalidateSize(false);
+      // fitBounds/setView ran while the srcdoc iframe was still 0-height; re-fit once the real size is known.
+      if(!window.__vipFit && typeof routeLayers!=='undefined' && routeLayers.length){
+        try{ map.fitBounds(L.featureGroup(routeLayers).getBounds(),{padding:[42,42],maxZoom:15}); window.__vipFit=true; }catch(e){}
+      }
+    }
+    if(window.ResizeObserver){new ResizeObserver(fixMapSize).observe(document.getElementById('map'));}
+    else{window.addEventListener('load',fixMapSize);setTimeout(fixMapSize,300);}
+    window.addEventListener('resize',fixMapSize);
+    setTimeout(fixMapSize,150);
     function animateMarker(marker,from,to,duration){
       if(from[0]===to[0]&&from[1]===to[1])return;
       const started=performance.now();

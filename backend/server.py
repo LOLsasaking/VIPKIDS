@@ -144,9 +144,18 @@ async def enforce_rate_limit(bucket: str, subject: str, limit: int, window_secon
     )
     return key
 
+def demo_accounts_enabled() -> bool:
+    """Demo/reviewer accounts: on by default outside production, explicit opt-in in production.
+
+    App-store reviewers need permanent working credentials against the live backend, so
+    production allows them only when ENABLE_DEMO_ACCOUNTS is set deliberately.
+    """
+    default = "false" if ENVIRONMENT == "production" else "true"
+    return os.environ.get("ENABLE_DEMO_ACCOUNTS", default).strip().lower() in ("1", "true", "yes")
+
 async def refresh_development_demo_locations():
-    """Keep local demo vehicles visible while testers click around the app."""
-    if ENVIRONMENT == "production":
+    """Keep demo vehicles visible while testers (and store reviewers) click around the app."""
+    if not demo_accounts_enabled():
         return
     now = now_utc()
     await db.driver_locations.update_many(
@@ -1640,8 +1649,8 @@ async def remove_legacy_demo_data():
     await db.migrations.insert_one({"id": migration_id, "applied_at": now_utc().isoformat()})
 
 async def ensure_development_demo_accounts():
-    """Seed local-only demo accounts for quick phone testing."""
-    if ENVIRONMENT == "production" or os.environ.get("ENABLE_DEMO_ACCOUNTS", "true").lower() not in ("1", "true", "yes"):
+    """Seed demo accounts for phone testing and permanent app-store reviewer logins."""
+    if not demo_accounts_enabled():
         return
     password = os.environ.get("DEMO_PASSWORD", "vipdemo123")
 
