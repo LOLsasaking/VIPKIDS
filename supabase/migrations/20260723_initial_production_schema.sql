@@ -3,18 +3,28 @@
 -- for private child transportation: direct client queries are limited by RLS,
 -- while operational writes run through authenticated Edge Functions.
 
+begin;
+
 create extension if not exists pgcrypto;
 
-create type public.user_role as enum ('admin', 'parent', 'driver', 'child');
-create type public.account_status as enum ('pending', 'approved', 'active', 'suspended');
-create type public.route_phase as enum ('morning', 'afternoon');
-create type public.attendance_status as enum (
-  'on_the_way', 'approaching', 'picked_up', 'absent', 'no_show',
-  'arrived_school', 'leaving_school', 'arriving_home', 'arrived_home',
-  'delay', 'alt_dropoff'
-);
+do $$ begin
+  create type public.user_role as enum ('admin', 'parent', 'driver', 'child');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create type public.account_status as enum ('pending', 'approved', 'active', 'suspended');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create type public.route_phase as enum ('morning', 'afternoon');
+exception when duplicate_object then null; end $$;
+do $$ begin
+  create type public.attendance_status as enum (
+    'on_the_way', 'approaching', 'picked_up', 'absent', 'no_show',
+    'arrived_school', 'leaving_school', 'arriving_home', 'arrived_home',
+    'delay', 'alt_dropoff'
+  );
+exception when duplicate_object then null; end $$;
 
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   role public.user_role not null,
   status public.account_status not null default 'pending',
@@ -32,7 +42,7 @@ create table public.profiles (
   updated_at timestamptz not null default now()
 );
 
-create table public.vehicles (
+create table if not exists public.vehicles (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid references public.profiles(id) on delete set null,
   make text not null,
@@ -48,7 +58,7 @@ create table public.vehicles (
   updated_at timestamptz not null default now()
 );
 
-create table public.children (
+create table if not exists public.children (
   id uuid primary key default gen_random_uuid(),
   parent_id uuid not null references public.profiles(id) on delete cascade,
   child_account_id uuid unique references public.profiles(id) on delete set null,
@@ -69,7 +79,7 @@ create table public.children (
   updated_at timestamptz not null default now()
 );
 
-create table public.routes (
+create table if not exists public.routes (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete restrict,
   vehicle_id uuid references public.vehicles(id) on delete set null,
@@ -81,7 +91,7 @@ create table public.routes (
   updated_at timestamptz not null default now()
 );
 
-create table public.route_children (
+create table if not exists public.route_children (
   route_id uuid not null references public.routes(id) on delete cascade,
   child_id uuid not null references public.children(id) on delete cascade,
   stop_order integer not null check (stop_order >= 1),
@@ -89,7 +99,7 @@ create table public.route_children (
   unique (route_id, stop_order)
 );
 
-create table public.route_sessions (
+create table if not exists public.route_sessions (
   id uuid primary key default gen_random_uuid(),
   route_id uuid references public.routes(id) on delete set null,
   driver_id uuid not null references public.profiles(id) on delete restrict,
@@ -101,7 +111,7 @@ create table public.route_sessions (
   planned_geometry jsonb not null default '[]'::jsonb
 );
 
-create table public.live_locations (
+create table if not exists public.live_locations (
   driver_id uuid primary key references public.profiles(id) on delete cascade,
   route_session_id uuid references public.route_sessions(id) on delete cascade,
   latitude double precision not null check (latitude between -90 and 90),
@@ -112,7 +122,7 @@ create table public.live_locations (
   expires_at timestamptz not null default now() + interval '2 minutes'
 );
 
-create table public.route_points (
+create table if not exists public.route_points (
   id bigint generated always as identity primary key,
   route_session_id uuid not null references public.route_sessions(id) on delete cascade,
   latitude double precision not null check (latitude between -90 and 90),
@@ -121,7 +131,7 @@ create table public.route_points (
   expires_at timestamptz not null default now() + interval '30 days'
 );
 
-create table public.attendance_events (
+create table if not exists public.attendance_events (
   id uuid primary key default gen_random_uuid(),
   child_id uuid not null references public.children(id) on delete cascade,
   driver_id uuid not null references public.profiles(id) on delete restrict,
@@ -131,7 +141,7 @@ create table public.attendance_events (
   created_at timestamptz not null default now()
 );
 
-create table public.emergency_events (
+create table if not exists public.emergency_events (
   id uuid primary key default gen_random_uuid(),
   driver_id uuid not null references public.profiles(id) on delete restrict,
   route_session_id uuid references public.route_sessions(id) on delete set null,
@@ -142,7 +152,7 @@ create table public.emergency_events (
   created_at timestamptz not null default now()
 );
 
-create table public.push_tokens (
+create table if not exists public.push_tokens (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   token text not null unique,
@@ -151,12 +161,12 @@ create table public.push_tokens (
   updated_at timestamptz not null default now()
 );
 
-create index children_parent_idx on public.children(parent_id);
-create index children_driver_idx on public.children(assigned_driver_id);
-create index routes_driver_idx on public.routes(driver_id);
-create index route_sessions_driver_active_idx on public.route_sessions(driver_id) where ended_at is null;
-create index route_points_session_time_idx on public.route_points(route_session_id, recorded_at desc);
-create index attendance_child_time_idx on public.attendance_events(child_id, created_at desc);
+create index if not exists children_parent_idx on public.children(parent_id);
+create index if not exists children_driver_idx on public.children(assigned_driver_id);
+create index if not exists routes_driver_idx on public.routes(driver_id);
+create index if not exists route_sessions_driver_active_idx on public.route_sessions(driver_id) where ended_at is null;
+create index if not exists route_points_session_time_idx on public.route_points(route_session_id, recorded_at desc);
+create index if not exists attendance_child_time_idx on public.attendance_events(child_id, created_at desc);
 
 -- Helpers deliberately use `security definer` so policies stay short. They do
 -- not expose data; each merely answers whether the current auth user is related
@@ -193,36 +203,46 @@ alter table public.attendance_events enable row level security;
 alter table public.emergency_events enable row level security;
 alter table public.push_tokens enable row level security;
 
+drop policy if exists "profiles: self or admin" on public.profiles;
 create policy "profiles: self or admin" on public.profiles for select using (id = auth.uid() or public.is_admin());
 -- Profile edits are handled by a trusted function. A broad `update where id =
 -- auth.uid()` policy would let a user promote their own status or alter consent.
+drop policy if exists "vehicles: assigned parties or admin" on public.vehicles;
 create policy "vehicles: assigned parties or admin" on public.vehicles for select using (
   public.is_admin() or driver_id = auth.uid() or exists (
     select 1 from public.children c where c.assigned_vehicle_id = vehicles.id and c.parent_id = auth.uid()
   )
 );
+drop policy if exists "children: assigned parties or admin" on public.children;
 create policy "children: assigned parties or admin" on public.children for select using (
   public.is_admin() or parent_id = auth.uid() or assigned_driver_id = auth.uid()
 );
 -- Family records and assignments are changed only through the authenticated
 -- Edge API. This prevents a parent client from assigning a driver/vehicle or
 -- changing protected child fields directly with the public anon key.
+drop policy if exists "routes: assigned driver or admin" on public.routes;
 create policy "routes: assigned driver or admin" on public.routes for select using (public.is_admin() or driver_id = auth.uid());
+drop policy if exists "route children: related party or admin" on public.route_children;
 create policy "route children: related party or admin" on public.route_children for select using (
   public.is_admin() or public.is_parent_of(child_id) or public.is_driver_of(child_id)
 );
 -- Route geometry can reveal other families' homes. Parents receive only their
 -- allowed route segment from a trusted Edge Function, not raw multi-stop data.
+drop policy if exists "sessions: driver or admin" on public.route_sessions;
 create policy "sessions: driver or admin" on public.route_sessions for select using (
   public.is_admin() or driver_id = auth.uid()
 );
+drop policy if exists "locations: active assigned audience" on public.live_locations;
 create policy "locations: active assigned audience" on public.live_locations for select using (
   public.is_admin() or driver_id = auth.uid() or exists(select 1 from public.children c where c.assigned_driver_id = live_locations.driver_id and (c.parent_id = auth.uid() or c.child_account_id = auth.uid()))
 );
+drop policy if exists "route points: active assigned audience" on public.route_points;
 create policy "route points: active assigned audience" on public.route_points for select using (
   public.is_admin() or exists(select 1 from public.route_sessions s where s.id = route_points.route_session_id and s.driver_id = auth.uid())
 );
+drop policy if exists "attendance: assigned parties" on public.attendance_events;
 create policy "attendance: assigned parties" on public.attendance_events for select using (public.is_admin() or public.is_parent_of(child_id) or public.is_driver_of(child_id) or public.is_child_account_for(child_id));
+drop policy if exists "emergency: driver/admin" on public.emergency_events;
 create policy "emergency: driver/admin" on public.emergency_events for select using (public.is_admin() or driver_id = auth.uid());
 -- Push-token writes are Edge-only so token format, platform, and cross-account
 -- device reassignment are always validated before delivery.
@@ -257,9 +277,19 @@ where c.child_account_id = auth.uid();
 grant select on public.child_assigned_ride to authenticated;
 
 -- Realtime is intentionally limited to the two live operational tables.
-alter publication supabase_realtime add table public.live_locations, public.attendance_events;
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'live_locations') then
+    alter publication supabase_realtime add table public.live_locations;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'attendance_events') then
+    alter publication supabase_realtime add table public.attendance_events;
+  end if;
+end $$;
 
 -- Schedule this in Supabase Cron (or an Edge Function) once daily. These values
 -- match the product policy: live location 2 minutes; route points 30 days.
 -- delete from public.live_locations where expires_at < now();
 -- delete from public.route_points where expires_at < now();
+
+commit;

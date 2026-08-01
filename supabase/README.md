@@ -12,14 +12,33 @@ access. Never place the Supabase `service_role` key in the mobile app.
 ## Apply the database migration
 
 1. Create a new Supabase project in the organization that owns VIP Kids.
-2. Apply both migrations in filename order (`supabase db push` after linking is
+2. Confirm the target has no legacy `public` tables with incompatible `text`/
+   `jsonb` identifiers. Run this read-only preflight before migration:
+
+   ```sql
+   select table_name,
+          string_agg(column_name || ':' || udt_name, ', ' order by ordinal_position) as columns
+   from information_schema.columns
+   where table_schema = 'public'
+   group by table_name
+   order by table_name;
+   ```
+
+   If old VIP Kids tables exist, archive/migrate them under a separate locked
+   schema or use a clean project. Do not drop or rename them without an approved
+   data-retention decision and a verified backup.
+3. Apply both migrations in filename order (`supabase db push` after linking is
    preferred so migration history is recorded).
-3. In **Authentication > Providers**, enable email/password and disable public
+4. In **Authentication > Providers**, enable email/password and disable public
    sign-ups if VIP Kids will only approve invited families. If public requests are
    desired, enable sign-ups but keep every new `profiles.status` as `pending`.
-4. Set the site URL and mobile redirect URL to the real VIP Kids domains/scheme.
-5. Store the project URL and anon key in the mobile build environment only. Store
+5. Set the site URL and mobile redirect URL to the real VIP Kids domains/scheme.
+6. Store the project URL and anon key in the mobile build environment only. Store
    the service-role key only in a server-side Edge Function or trusted backend.
+
+Both migrations are transactional and safe to rerun. Duplicate enum, table,
+index, policy, bucket, and Realtime-publication operations are handled
+idempotently; an unexpected error rolls back the current migration.
 
 ## Deploy the production functions
 

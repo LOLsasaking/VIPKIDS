@@ -1,5 +1,7 @@
 -- Operational tables and privacy controls required by the mobile application.
 
+begin;
+
 alter table public.profiles
   add column if not exists email text unique,
   add column if not exists on_duty boolean not null default false,
@@ -133,11 +135,17 @@ alter table public.audit_events enable row level security;
 alter table public.notification_outbox enable row level security;
 alter table public.push_tickets enable row level security;
 
+drop policy if exists "messages: participant read" on public.messages;
 create policy "messages: participant read" on public.messages for select using (from_user_id = auth.uid() or to_user_id = auth.uid() or public.is_admin());
+drop policy if exists "notifications: recipient read" on public.notifications;
 create policy "notifications: recipient read" on public.notifications for select using (user_id = auth.uid() or public.is_admin());
+drop policy if exists "notifications: recipient marks read" on public.notifications;
 create policy "notifications: recipient marks read" on public.notifications for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "schedule: parent or admin reads" on public.schedule_requests;
 create policy "schedule: parent or admin reads" on public.schedule_requests for select using (parent_id = auth.uid() or public.is_admin());
+drop policy if exists "announcements: authenticated read" on public.announcements;
 create policy "announcements: authenticated read" on public.announcements for select to authenticated using (true);
+drop policy if exists "audit: admin only" on public.audit_events;
 create policy "audit: admin only" on public.audit_events for select using (public.is_admin());
 
 -- Notification records and push delivery must be committed together. Edge
@@ -190,4 +198,11 @@ values ('compliance-documents', 'compliance-documents', false, 10485760, array['
 on conflict (id) do nothing;
 
 -- Realtime contains current operations only, never messages or family records.
-alter publication supabase_realtime add table public.notifications;
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'notifications') then
+    alter publication supabase_realtime add table public.notifications;
+  end if;
+end $$;
+
+commit;
