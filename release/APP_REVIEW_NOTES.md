@@ -1,6 +1,6 @@
 # App Review Notes
 
-VIP Kids Transportation is a login-gated companion for a real-world private school transportation service. It does not sell digital goods. Children cannot create accounts; after recording parent or guardian authorization, an administrator may create a restricted login tied to one existing child transportation record.
+VIP Kids Transportation is a login-gated companion for a real-world private school transportation service. It does not sell digital goods. Children cannot self-register; an approved parent can create a restricted login only after explicitly confirming parent or guardian authorization. An administrator still controls the dedicated driver, vehicle, and route assignment.
 
 ## Reviewer credentials
 

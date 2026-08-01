@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, CheckCircle2, ShieldCheck } from 'lucide-react-native';
+import { ArrowLeft, CheckCircle2, CheckSquare2, ShieldCheck, Square } from 'lucide-react-native';
 import BrandLogo from '@/src/components/BrandLogo';
 import { Api } from '@/src/api';
 import { C, Fonts, T } from '@/src/theme';
@@ -28,6 +28,7 @@ export default function Register() {
   const [address, setAddress] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -35,8 +36,9 @@ export default function Register() {
   const submit = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     if (!name.trim() || !normalizedEmail) return setError('Enter your full name and email.');
-    if (password.length < 8) return setError('Password must contain at least 8 characters.');
+    if (password.length < 12) return setError('Password must contain at least 12 characters.');
     if (password !== confirmPassword) return setError('Passwords do not match.');
+    if (!accepted) return setError('Accept the Terms and Privacy notice to request access.');
     setBusy(true);
     setError(null);
     try {
@@ -103,8 +105,13 @@ export default function Register() {
           <Field label="EMAIL" value={email} onChangeText={setEmail} autoCapitalize="none" autoComplete="email" keyboardType="email-address" />
           <Field label="PHONE (OPTIONAL)" value={phone} onChangeText={setPhone} autoComplete="tel" keyboardType="phone-pad" />
           {role === 'parent' ? <Field label="HOME ADDRESS (OPTIONAL)" value={address} onChangeText={setAddress} autoComplete="street-address" /> : null}
-          <Field label="PASSWORD" value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" placeholder="At least 8 characters" />
+          <Field label="PASSWORD" value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" placeholder="At least 12 characters" />
           <Field label="CONFIRM PASSWORD" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoComplete="new-password" />
+
+          <Pressable style={styles.consent} onPress={() => setAccepted((value) => !value)} accessibilityRole="checkbox" accessibilityState={{ checked: accepted }} testID="register-consent">
+            {accepted ? <CheckSquare2 size={22} color={C.gold} /> : <Square size={22} color={C.textMuted} />}
+            <Text style={styles.consentText}>I agree to the <Text style={styles.inlineLink} onPress={() => router.push('/terms' as any)}>Terms of Service</Text> and acknowledge the <Text style={styles.inlineLink} onPress={() => router.push('/privacy')}>Privacy & Data Use notice</Text>.</Text>
+          </Pressable>
 
           <Pressable style={({ pressed }) => [styles.primary, pressed && { opacity: 0.82 }]} onPress={submit} disabled={busy} testID="register-submit">
             {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.primaryText}>SUBMIT FOR APPROVAL</Text>}
@@ -113,6 +120,8 @@ export default function Register() {
           <View style={styles.notice}><ShieldCheck size={16} color={C.success} /><Text style={styles.noticeText}>After approval, parents can add their child and create the child login. VIP admin still assigns the dedicated driver and vehicle.</Text></View>
           <View style={styles.legalLinks}>
             <Pressable onPress={() => router.push('/privacy')} accessibilityRole="link"><Text style={styles.legalLink}>PRIVACY & DATA USE</Text></Pressable>
+            <Text style={styles.legalDot}>•</Text>
+            <Pressable onPress={() => router.push('/terms' as any)} accessibilityRole="link"><Text style={styles.legalLink}>TERMS</Text></Pressable>
             <Text style={styles.legalDot}>•</Text>
             <Pressable onPress={() => router.push('/delete-account')} accessibilityRole="link"><Text style={styles.legalLink}>DELETE ACCOUNT</Text></Pressable>
           </View>
@@ -151,6 +160,9 @@ const styles = StyleSheet.create({
   errorText: { color: '#FF8C94', fontFamily: Fonts.bodyMedium, fontSize: 13 },
   notice: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', padding: 12, borderWidth: 1, borderColor: C.border, borderRadius: 10, backgroundColor: C.bgSecondary },
   noticeText: { flex: 1, color: C.textSecondary, fontFamily: Fonts.body, fontSize: 11, lineHeight: 16 },
+  consent: { minHeight: 52, flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderWidth: 1, borderColor: C.border, borderRadius: 10, backgroundColor: C.bgSecondary, padding: 12 },
+  consentText: { flex: 1, color: C.textSecondary, fontFamily: Fonts.body, fontSize: 12, lineHeight: 18 },
+  inlineLink: { color: C.gold, fontFamily: Fonts.bodySemiBold },
   legalLinks: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, minHeight: 38 },
   legalLink: { color: C.gold, fontFamily: Fonts.bodySemiBold, fontSize: 9, letterSpacing: 0.9 },
   legalDot: { color: C.textMuted, fontSize: 10 },

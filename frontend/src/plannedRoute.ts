@@ -1,8 +1,10 @@
 import * as Location from 'expo-location';
 import { orderedRouteAddresses, RoutePhase } from '@/src/googleMaps';
+import { supabase, supabaseConfigured } from '@/src/supabase';
 
 export type PlannedRoutePoint = { lat: number; lng: number };
 const ROUTING_BASE_URL = (process.env.EXPO_PUBLIC_ROUTING_BASE_URL || '').replace(/\/$/, '');
+const ROUTING_ENDPOINT = (process.env.EXPO_PUBLIC_ROUTING_ENDPOINT || '').replace(/\/$/, '');
 
 type AssignedChild = {
   home_address?: string;
@@ -38,6 +40,30 @@ export async function buildPlannedRoadRoute(
 
   const coordinates = start ? [start, ...stops] : stops;
   if (coordinates.length < 2) return { addresses, points: [] as PlannedRoutePoint[] };
+
+  if (ROUTING_ENDPOINT && ROUTING_ENDPOINT.startsWith('https://')) {
+    try {
+      const supabaseSession = supabaseConfigured && supabase ? await supabase.auth.getSession() : null;
+      const accessToken = supabaseSession?.data.session?.access_token;
+      const response = await fetch(ROUTING_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ coordinates }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const points = Array.isArray(data?.points)
+          ? data.points.filter((point: PlannedRoutePoint) => Number.isFinite(point?.lat) && Number.isFinite(point?.lng))
+          : [];
+        if (points.length >= 2) return { addresses, points: sampleRoute(points) };
+      }
+    } catch {
+      // Google Maps navigation remains available if route preview is unavailable.
+    }
+  }
 
   // A contracted or self-hosted OSRM-compatible endpoint must be supplied for
   // road geometry. Without one, preserve the assigned stop order without

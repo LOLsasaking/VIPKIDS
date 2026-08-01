@@ -1,5 +1,5 @@
 import { Tabs, Redirect } from 'expo-router';
-import { BadgeCheck, LayoutDashboard, Users, Megaphone } from 'lucide-react-native';
+import { BadgeCheck, LayoutDashboard, LockKeyhole, Users, Megaphone } from 'lucide-react-native';
 import { useAuth } from '@/src/auth';
 import { C, Fonts } from '@/src/theme';
 
@@ -20,6 +20,7 @@ export default function AdminLayout() {
       <Tabs.Screen name="users" options={{ title: 'Users', tabBarIcon: ({ color }) => <Users size={22} color={color} strokeWidth={1.6} /> }} />
       <Tabs.Screen name="compliance" options={{ title: 'Compliance', tabBarIcon: ({ color }) => <BadgeCheck size={22} color={color} strokeWidth={1.6} /> }} />
       <Tabs.Screen name="announce" options={{ title: 'Announce', tabBarIcon: ({ color }) => <Megaphone size={22} color={color} strokeWidth={1.6} /> }} />
+      <Tabs.Screen name="security" options={{ title: 'Security', tabBarIcon: ({ color }) => <LockKeyhole size={22} color={color} strokeWidth={1.6} /> }} />
       <Tabs.Screen name="operations" options={{ href: null }} />
     </Tabs>
   );

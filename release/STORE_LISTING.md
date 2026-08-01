@@ -1,49 +1,64 @@
-# VIP Kids Transportation — Store Listing
+# VIP Kids Transportation — store listing draft
 
 ## Shared details
 
 - Public name: **VIP Kids Transportation**
-- Bundle ID / Android package: `com.vipkidstransportation.app`
-- Audience: authorized adults age 18+ (parents, drivers, and operations staff)
-- Business model: real-world transportation service; no digital goods or in-app purchases
-- Primary category: Travel / Transportation
-- Support email: `gonxander@gmail.com` (replace with a dedicated business support address before submission if available)
-- Privacy URL after web deployment: `https://<public-domain>/privacy`
-- Account deletion URL after web deployment: `https://<public-domain>/delete-account`
+- Bundle/package: `com.vipkidstransportation.app`
+- Service: prearranged real-world transportation; no digital goods, payments,
+  advertising, ratings, or on-demand ride selection.
+- Support: `gonxander@gmail.com`
+- Planned privacy URL: `https://lolsasaking.github.io/VIPKIDS/privacy.html`
+- Planned deletion URL: `https://lolsasaking.github.io/VIPKIDS/delete-account.html`
+- Planned support URL: `https://lolsasaking.github.io/VIPKIDS/support.html`
 
-## Apple App Store
+## Audience decision required
 
-- Name (30 characters maximum): `VIP Kids Transportation`
-- Subtitle (30 characters maximum): `Dedicated school route safety`
-- Promotional text: `Follow your child’s dedicated driver and vehicle, receive route safety updates, and stay connected throughout the school day.`
-- Keywords (100 characters maximum): `school,transportation,route,driver,parent,safety,pickup,vehicle,tracking,concierge`
+Adults are the primary account holders and drivers, but an authorized guardian
+may create a restricted child login for the assigned rider. The final App Store
+age/Kids Category and Google Play target-audience/Families answers require counsel
+and store-policy review. Apple also reserves “Kids” wording in metadata for the
+Kids Category. Do not submit the current name/audience answers until that choice
+is formally approved.
+
+## Apple metadata draft
+
+- Name: `VIP Kids Transportation`
+- Subtitle: `Dedicated route safety`
+- Promotional text: `Follow the assigned vehicle, receive verified route safety
+  updates, and stay connected throughout the school day.`
+- Keywords: `transportation,route,driver,parent,safety,pickup,vehicle,tracking`
+- Suggested primary category: Travel (confirm after audience decision).
 
 ### Description
 
-VIP Kids Transportation is the private companion app for approved VIP Kids families, drivers, and operations staff.
+VIP Kids Transportation is the private companion for approved VIP Kids families,
+assigned riders, drivers, and operations staff.
 
-Parents can follow their child’s assigned vehicle during an active route, see verified pickup and arrival updates, review the dedicated driver and vehicle, message the driver, and view schedule information.
+Parents can follow their child’s assigned vehicle during an active route, receive
+pickup/no-show/arrival updates, review the dedicated driver and SUV, message the
+driver, and submit route-change requests. A guardian-authorized child account sees
+only that rider’s assigned vehicle, driver, route status, and emergency contact.
 
-Drivers receive their assigned route, complete a required pre-route safety check, open the route in Google Maps, share live location during the active trip, and record each child as picked up or absent. End-of-route checks help confirm every child is accounted for and the vehicle is empty.
+Drivers receive an administrator-assigned route, complete the seat-belt, fuel,
+and charged/mounted-phone safety check, open the stops in Google Maps, share live
+location only during the active route, and record each rider as picked up or
+absent. Administrators approve access, make assignments, monitor live operations,
+manage vehicles/routes, and review compliance expirations.
 
-Authorized administrators approve accounts, assign children to parents and dedicated drivers, manage vehicles and routes, monitor live operations, send announcements, and review driver and vehicle compliance dates.
+Access is limited to approved VIP Kids customers and personnel. This is not an
+on-demand ride service and users cannot choose another driver or vehicle.
 
-Access is limited to approved VIP Kids Transportation customers and personnel. Children do not create accounts or use the app directly.
-
-## Google Play
+## Google Play metadata draft
 
 - App name: `VIP Kids Transportation`
-- Short description: `Live route safety and dedicated-driver updates for approved VIP Kids families.`
-- Full description: use the Apple description above.
-- Target audience: adults 18 and over only.
-- Ads: no.
-- News app: no.
-- Government app: no.
-- Financial features: none.
-- Health features: none.
+- Short description: `Private assigned-route safety updates for approved VIP Kids families.`
+- Full description: use the description above.
+- Ads: No. Purchases: No. Government/news/financial/health app: No.
+- Target audience: unresolved—must accurately include the restricted child role.
 
-## Required creative assets
+## Required assets
 
-- Apple: 1024×1024 app icon and 1–10 real 6.9-inch iPhone screenshots. iPad distribution is disabled for the first release.
-- Google Play: 512×512 app icon, 1024×500 feature graphic, and at least two real phone screenshots.
-- Recommended screenshots: sign-in, parent dashboard, live parent route, driver safety checklist, driver attendance swipe, driver identity/vehicle, and admin operations.
+- Apple: 1024×1024 icon and real signed-build iPhone screenshots; iPad is disabled.
+- Google: 512×512 icon, 1024×500 feature graphic, and at least two phone screenshots.
+- Use synthetic reviewer data only: sign-in, parent dashboard/map, child ride,
+  driver checklist/swipe/profile, and admin fleet/operations.

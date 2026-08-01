@@ -4,9 +4,11 @@ check-in/out events, schedule requests, announcements.
 """
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from typing import List, Optional, Literal
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -58,6 +60,12 @@ ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
+    if host.strip()
+]
+MAX_REQUEST_BYTES = int(os.environ.get("MAX_REQUEST_BYTES", "2500000"))
 
 if ENVIRONMENT == "production":
     config_errors = []
@@ -69,13 +77,20 @@ if ENVIRONMENT == "production":
         config_errors.append("MONGO_URL must use a MongoDB connection string")
     if any(origin.startswith("http://") or "localhost" in origin or "127.0.0.1" in origin for origin in ALLOWED_ORIGINS):
         config_errors.append("ALLOWED_ORIGINS must contain only production HTTPS origins")
+    if any(host in ("*", "localhost", "127.0.0.1", "testserver") for host in ALLOWED_HOSTS):
+        config_errors.append("ALLOWED_HOSTS must contain only explicit production hostnames")
     if config_errors:
         raise RuntimeError("Invalid production configuration: " + "; ".join(config_errors))
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="VIP KIDS TRANSPORTATION API")
+app = FastAPI(
+    title="VIP KIDS TRANSPORTATION API",
+    docs_url=None if ENVIRONMENT == "production" else "/docs",
+    redoc_url=None if ENVIRONMENT == "production" else "/redoc",
+    openapi_url=None if ENVIRONMENT == "production" else "/openapi.json",
+)
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -298,7 +313,11 @@ async def persist_notification(notification: dict) -> None:
     await send_push_notifications([notification])
 
 # ---------- Models ----------
-class AccessRequestIn(BaseModel):
+class ApiInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class AccessRequestIn(ApiInput):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=2, max_length=100)
@@ -306,11 +325,11 @@ class AccessRequestIn(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=30)
     address: Optional[str] = Field(default=None, max_length=300)
 
-class LoginIn(BaseModel):
+class LoginIn(ApiInput):
     email: EmailStr
     password: str
 
-class DeleteAccountIn(BaseModel):
+class DeleteAccountIn(ApiInput):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     confirmation: Literal["DELETE"]
@@ -320,7 +339,7 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
     user: dict
 
-class ChildIn(BaseModel):
+class ChildIn(ApiInput):
     name: str
     parent_id: str
     driver_id: Optional[str] = None
@@ -337,7 +356,7 @@ class ChildIn(BaseModel):
     emergency_contact_phone: Optional[str] = None
     contact_phone: Optional[str] = None  # child's own contact if applicable
 
-class ParentChildIn(BaseModel):
+class ParentChildIn(ApiInput):
     name: str = Field(min_length=2, max_length=100)
     child_email: EmailStr
     child_password: str = Field(min_length=8, max_length=128)
@@ -353,13 +372,13 @@ class ParentChildIn(BaseModel):
     emergency_contact_phone: Optional[str] = Field(default=None, max_length=30)
     contact_phone: Optional[str] = Field(default=None, max_length=30)
 
-class ChildAccessIn(BaseModel):
+class ChildAccessIn(ApiInput):
     email: EmailStr
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
     enabled: bool = True
     guardian_consent_confirmed: bool
 
-class VehicleIn(BaseModel):
+class VehicleIn(ApiInput):
     make: str
     model: str
     plate: str
@@ -372,7 +391,7 @@ class VehicleIn(BaseModel):
     insurance_expiry: Optional[str] = None
     inspection_expiry: Optional[str] = None
 
-class RouteIn(BaseModel):
+class RouteIn(ApiInput):
     name: str
     school: Optional[str] = None
     driver_id: Optional[str] = None
@@ -380,50 +399,50 @@ class RouteIn(BaseModel):
     child_ids: List[str] = []
     notes: Optional[str] = None
 
-class CheckEventIn(BaseModel):
+class CheckEventIn(ApiInput):
     child_id: str
     event_type: Literal["on_the_way", "approaching", "picked_up", "arrived_school", "leaving_school", "arriving_home", "arrived_home", "delay", "no_show", "alt_dropoff"]
     message: Optional[str] = None
     address: Optional[str] = None  # for alt_dropoff
 
-class LocationIn(BaseModel):
+class LocationIn(ApiInput):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
 
-class RouteStartIn(BaseModel):
+class RouteStartIn(ApiInput):
     phase: Literal["morning", "afternoon"] = "morning"
     seatbelts_checked: bool = False
     fuel_level_checked: bool = False
     phone_charged_and_mounted: bool = False
 
-class RoutePointIn(BaseModel):
+class RoutePointIn(ApiInput):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
 
-class RoutePlanIn(BaseModel):
+class RoutePlanIn(ApiInput):
     phase: Literal["morning", "afternoon"]
     addresses: List[str] = Field(default_factory=list, max_length=50)
     points: List[RoutePointIn] = Field(min_length=2, max_length=1000)
 
-class EmergencyIn(BaseModel):
+class EmergencyIn(ApiInput):
     lat: Optional[float] = None
     lng: Optional[float] = None
     message: Optional[str] = None
 
-class RouteEndIn(BaseModel):
+class RouteEndIn(ApiInput):
     all_children_accounted_for: bool = False
     vehicle_checked_empty: bool = False
 
-class MessageIn(BaseModel):
+class MessageIn(ApiInput):
     to_user_id: str = Field(min_length=1, max_length=100)
     text: str = Field(min_length=1, max_length=2000)
     child_id: Optional[str] = Field(default=None, max_length=100)
 
-class PushTokenIn(BaseModel):
+class PushTokenIn(ApiInput):
     token: str = Field(min_length=20, max_length=256)
     platform: Literal["android", "ios", "web", "unknown"] = "unknown"
 
-class ScheduleRequestIn(BaseModel):
+class ScheduleRequestIn(ApiInput):
     child_id: str
     request_type: Literal["after_school_activity", "medical_appointment", "temporary_change"]
     when: str
@@ -431,12 +450,12 @@ class ScheduleRequestIn(BaseModel):
     dropoff_address: Optional[str] = None
     notes: Optional[str] = None
 
-class AnnouncementIn(BaseModel):
+class AnnouncementIn(ApiInput):
     title: str
     body: str
     category: Literal["weather", "school_closing", "emergency", "general"] = "general"
 
-class NotifPrefsIn(BaseModel):
+class NotifPrefsIn(ApiInput):
     on_the_way: bool = True
     approaching: bool = True
     picked_up: bool = True
@@ -598,6 +617,12 @@ async def register_push_token(data: PushTokenIn, user: dict = Depends(current_us
     if not is_expo_push_token(data.token):
         raise HTTPException(400, "Unsupported push token")
     now = now_utc().isoformat()
+    # A shared device must not keep receiving notifications for the previous
+    # signed-in account after another user registers the same native token.
+    await db.push_tokens.update_many(
+        {"token": data.token, "user_id": {"$ne": user["id"]}},
+        {"$set": {"disabled": True, "updated_at": now}},
+    )
     await db.push_tokens.update_one(
         {"user_id": user["id"], "token": data.token},
         {"$set": {
@@ -619,7 +644,7 @@ async def unregister_push_token(data: PushTokenIn, user: dict = Depends(current_
     )
     return {"ok": True}
 
-class PhotoIn(BaseModel):
+class PhotoIn(ApiInput):
     photo_url: str = Field(min_length=1, max_length=2_000_000)
 
     @field_validator("photo_url")
@@ -635,7 +660,7 @@ async def update_photo(data: PhotoIn, user: dict = Depends(current_user)):
     await db.users.update_one({"id": user["id"]}, {"$set": {"photo_url": data.photo_url}})
     return {"ok": True, "photo_url": data.photo_url}
 
-class AssignIn(BaseModel):
+class AssignIn(ApiInput):
     driver_id: Optional[str] = None
     vehicle_id: Optional[str] = None
 
@@ -690,7 +715,7 @@ async def admin_reactivate(uid: str, user: dict = Depends(require_role("admin"))
     await db.users.update_one({"id": uid}, {"$set": {"status": new_status}})
     return {"ok": True, "status": new_status}
 
-class DriverComplianceIn(BaseModel):
+class DriverComplianceIn(ApiInput):
     license_number: Optional[str] = None
     license_expiry: Optional[str] = None
     permit_expiry: Optional[str] = None
@@ -1874,6 +1899,7 @@ async def health_ready():
     return {"status": "ready"}
 
 app.include_router(api)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -1881,3 +1907,14 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+@app.middleware("http")
+async def reject_oversized_requests(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header"})
+    return await call_next(request)

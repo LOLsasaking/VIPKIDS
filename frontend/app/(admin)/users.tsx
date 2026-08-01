@@ -298,6 +298,7 @@ function AddChildModal({ visible, initial, onClose, parents, onCreated }: any) {
   const submit = async () => {
     if (!name || !school || !parentId) return Alert.alert('Missing', 'Name, school and parent are required.');
     if (childEmail && !isEdit && !childPassword) return Alert.alert('Missing', 'Enter a temporary password for the child login.');
+    if (childPassword && childPassword.length < 12) return Alert.alert('Password too short', 'Child passwords require at least 12 characters.');
     if (childPassword && !childEmail) return Alert.alert('Missing', 'Enter the child login email.');
     if (childEmail && !guardianConsent) return Alert.alert('Authorization required', 'Confirm parent or guardian authorization before creating child access.');
     setBusy(true);
@@ -417,7 +418,7 @@ function AddChildModal({ visible, initial, onClose, parents, onCreated }: any) {
               onChangeText={setChildPassword}
               secureTextEntry
               autoCapitalize="none"
-              placeholder={isEdit && initial?.child_account ? 'Keep current password' : 'At least 8 characters'}
+              placeholder={isEdit && initial?.child_account ? 'Keep current password' : 'At least 12 characters'}
               placeholderTextColor={C.textMuted}
             />
             <TouchableOpacity

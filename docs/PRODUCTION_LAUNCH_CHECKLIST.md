@@ -17,19 +17,18 @@ the demo environment.
 
 ## Required before production data
 
-- [ ] Provision the production database. The shipping backend uses **MongoDB**
-  (`MONGO_URL`) — MongoDB Atlas is the zero-code-change option. A Postgres/Supabase
-  alternative is designed but NOT active; see
-  `docs/future-supabase-migration/` (adopting it means rewriting `backend/server.py`).
-- [ ] Configure a production HTTPS API and HTTPS routing provider. Route/home/
-  school addresses must never be sent to an unapproved public routing service.
+- [ ] Provision the Supabase production project, apply both migrations in order,
+  deploy the Edge Functions, and keep MongoDB only as a temporary compatibility
+  service during the verified cutover.
+- [ ] Configure server-side Google Routes and a package/SHA-1-restricted Android
+  Maps SDK key. Route/home/school coordinates must not use public routing servers.
 - [ ] Replace all preview `http://` build variables with production `https://`
   variables in EAS Secrets.
-- [ ] Rotate the current administrator password and JWT secret. Use a password
-  manager-generated password and a 32+ character random JWT secret.
+- [ ] Create a unique 12+ character production administrator password, enroll the
+  in-app authenticator MFA, and verify all admin API calls require `aal2`.
 - [ ] Confirm the live-location retention period with counsel/insurance, then
   configure scheduled cleanup to enforce it.
-- [ ] Set up FCM for Android and APNs credentials for iOS in Expo/EAS, then send
+- [ ] Set up FCM/APNs and Expo enhanced push security in Expo/EAS, then send
   real-device tests for pickup, absence, arrival, emergency, and announcements.
 - [ ] Run an active route on real devices with the app foregrounded, backgrounded,
   device locked, navigation open, weak signal, and location/notification
@@ -40,7 +39,7 @@ the demo environment.
 - [ ] Publish a public HTTPS Privacy Policy and support contact. Complete Apple
   App Privacy and Google Play Data Safety declarations from the final production
   data flows—not from demo assumptions.
-- [ ] Add production crash/error monitoring that redacts names, addresses,
+- [ ] Add a child-policy-compatible production crash monitor that redacts names, addresses,
   messages, tokens, and GPS coordinates.
 - [ ] Set up admin operating procedures: account verification, driver background
   screening, document expiry review, incident escalation, and emergency contact
@@ -60,7 +59,7 @@ the demo environment.
 - [ ] TLS-only API and routing URLs; no cleartext production traffic.
 - [ ] Token storage restricted to Keychain/Android Keystore (already used by the
   native app); no credentials or service keys in source control.
-- [ ] Server-side rate limiting, audit events, strict authorization tests, and
-  database backups/restoration drill.
+- [ ] Enable Supabase Auth rate limits/CAPTCHA, verify audit events and the strict
+  authorization matrix, and complete a database backup/restoration drill.
 - [ ] Verify every parent and child can only see their own assigned driver and
   live location, and every driver can only update their own active route.

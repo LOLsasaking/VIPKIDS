@@ -11,6 +11,11 @@ load_dotenv(Path(__file__).parent.parent.parent / "frontend" / ".env")
 BASE = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 API = f"{BASE}/api"
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_BACKEND_INTEGRATION") != "1",
+    reason="set RUN_BACKEND_INTEGRATION=1 with an isolated test backend to run destructive API tests",
+)
+
 ADMIN = {"email": "admin@vipkids.com", "password": "admin123"}
 DRIVER = {"email": "driver@vipkids.com", "password": "driver123"}
 PARENT = {"email": "parent@vipkids.com", "password": "parent123"}

@@ -1,47 +1,50 @@
-# Release Gate
+# Release gate
 
-## Implemented locally
+## Code-complete in this repository
 
-- [x] Stable iOS bundle identifier and Android application ID
-- [x] Production EAS build profiles
-- [x] 1024×1024 app icon and Android adaptive icon configuration
-- [x] Unused camera, microphone, and legacy storage permissions blocked
-- [x] iPad distribution disabled for the phone-first launch
-- [x] Specific foreground/background location purpose strings
-- [x] Prominent background-location disclosure before permission requests
-- [x] Server-verified pre-route checklist values
-- [x] Background tracking stops locally before route-end confirmation
-- [x] Self-service account deletion for active, pending, and suspended parent/driver/child login accounts
-- [x] Restricted child role tied to one administrator-created child record, with no self-registration
-- [x] Administrator must record parent/guardian authorization before enabling a child login
-- [x] Child view excludes guardian IDs, family addresses, other stops, other children, chat, and admin controls
-- [x] Cascading deletion/unassignment of associated personal data
-- [x] Public web routes for privacy information and account deletion
-- [x] Apple privacy manifest declarations added to Expo configuration
-- [x] API timeouts and production HTTPS enforcement
-- [x] Stale/unverified vehicle locations are not displayed as live
-- [x] Public OSRM routing fallback removed; approved routing endpoint is configurable
-- [x] GPS route retention and TTL indexes configured
-- [x] Production configuration validation and database-aware readiness endpoint
-- [x] Accurate draft store listing, review notes, and Data Safety worksheet
+- [x] Supabase Auth/Postgres schema, row-level read controls, Edge API, protected
+  service-role writes, audit events, data expiry, and private compliance storage.
+- [x] Parent/driver approval, parent-confirmed child login, admin assignment,
+  suspension/reactivation, and full account deletion/unassignment workflows.
+- [x] Native Google Maps/Apple Maps for mobile, server-side Google Routes road
+  geometry, approximately five-second route updates, smooth SUV movement, distinct
+  fleet cutouts/colors, stale-location hiding, and no public routing fallback.
+- [x] Expo push outbox, enhanced-security access token, notification preferences,
+  private lock-screen text, ticket/receipt processing, token rotation/removal, and
+  role-safe tap navigation.
+- [x] Driver three-item precheck, duplicate route prevention, attendance/no-show,
+  offline queue, SOS, and mandatory end-of-route confirmations.
+- [x] Production HTTPS/host/request-size hardening for the temporary FastAPI API.
+- [x] Privacy, draft terms, support, and account-deletion pages plus a GitHub
+  Pages workflow template; in-app terms/consent/deletion paths.
+- [x] Expo SDK 54 / Android API 36 configuration, stable identifiers, privacy
+  manifest, restricted permissions, EAS preview/production profiles, automated
+  tests, Expo Doctor validation, and operating/testing documentation.
 
-## External blocking requirements
+## Owner/account work required before production data
 
-- [ ] Deploy the backend to a monitored HTTPS production service.
-- [ ] Configure a TLS managed MongoDB deployment with backups and network restrictions.
-- [ ] Set production EAS variables: backend URL, approved routing URL, and privacy contact.
-- [ ] Host the Expo web export so `/privacy` and `/delete-account` have permanent public HTTPS URLs.
-- [ ] Replace remote public OpenStreetMap/Leaflet delivery with a contracted or self-hosted production map stack.
-- [ ] Implement and verify real APNs/FCM push delivery for pickup, absence, emergency, delay, and arrival events.
-- [ ] Rotate the disclosed administrator password to a unique 12+ character secret and add administrative MFA before launch.
-- [ ] Create restricted synthetic reviewer accounts for parent, child, driver, and administrator roles.
-- [ ] Complete a physical-device route test with the app backgrounded and Google Maps foregrounded.
-- [ ] Record Google background-location and foreground-service declaration videos.
-- [ ] Capture real production screenshots and create the Google feature graphic.
-- [ ] Review the privacy policy, retention schedule, parental authority, and child transportation obligations with qualified counsel.
-- [ ] Set and document the intended age audience in both stores; complete any applicable COPPA, Google Families, and Apple child-safety/privacy requirements before enabling child accounts in production.
-- [ ] Enroll and verify Apple Developer and Google Play organization accounts.
-- [ ] Build with Xcode 26+/iOS 26 SDK, upload to TestFlight, and complete Apple review metadata.
-- [ ] Build and sign the Android App Bundle, complete Play declarations, and satisfy any required closed test.
+- [ ] Sign into Supabase CLI, link a new production project, apply both migrations,
+  deploy four functions, configure Vault/Cron, MFA, backups, and restore testing.
+- [ ] Add Supabase URL/anon key to EAS production; add restricted Google Routes,
+  Android Maps SDK, Expo enhanced-push, cron, FCM, and APNs credentials.
+- [ ] Create the first unique-password/MFA administrator and synthetic reviewer
+  parent/child/driver/admin accounts—never use real children for review.
+- [ ] Put the final legal pages on `main`, enable GitHub Pages, and verify the
+  privacy/support/deletion URLs and monitored `gonxander@gmail.com` mailbox.
+- [ ] Have qualified counsel/insurer approve terms, privacy, guardian consent,
+  record retention, driver/vehicle compliance, emergency and transportation rules.
+- [ ] Decide Apple/Google audience classification. A restricted child login exists,
+  and Apple restricts “Kids” metadata outside the Kids Category; do not guess on
+  this store/legal decision.
+- [ ] Complete Apple App Privacy, Google Data Safety/Families, IARC/age rating,
+  background-location and foreground-service declarations from the final build.
+- [ ] Execute every physical-device case in `docs/testing.md`, including locked
+  screen, Google Maps foreground, weak signal, battery saving, denial/revocation,
+  token rotation, route end, and cross-account authorization.
+- [ ] Resolve findings, record Google permission videos, capture synthetic final
+  screenshots/feature graphic, then pass TestFlight and Play internal testing.
+- [ ] Build/sign the production iOS archive and Android AAB and submit only after
+  every item above has evidence and an accountable owner.
 
-Do not submit to either store until every external blocker above is complete.
+Do not call the app “ready to publish” or enter real child data until every
+unchecked item is complete.

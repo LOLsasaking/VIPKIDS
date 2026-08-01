@@ -8,3 +8,5 @@ GPS_RETENTION_DAYS=30
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-with-a-unique-strong-password
 ALLOWED_ORIGINS=https://app.example.com
+ALLOWED_HOSTS=api.example.com
+MAX_REQUEST_BYTES=2500000

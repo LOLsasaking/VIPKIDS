@@ -149,7 +149,7 @@
         {
           "icon": "./assets/images/vipkids-app-icon.png",
           "color": "#D4AF37",
-          "defaultChannel": "ride-updates"
+          "defaultChannel": "vipkids-safety"
         }
       ]
     ],

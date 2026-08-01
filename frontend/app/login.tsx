@@ -35,17 +35,30 @@ const DEMO_ACCOUNTS: Array<{
 
 export default function Login() {
   const router = useRouter();
-  const { login, demoLogin } = useAuth();
+  const { login, demoLogin, mfaRequired, verifyMfa } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   const continueWith = (role: 'parent' | 'driver' | 'child' | 'admin') => {
     if (role === 'parent') router.replace('/(parent)');
     else if (role === 'driver') router.replace('/(driver)');
     else if (role === 'child') router.replace('/(child)');
     else router.replace('/(admin)');
+  };
+
+  const submitMfa = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      continueWith((await verifyMfa(mfaCode.trim())).role);
+    } catch (err: any) {
+      setError(err.message || 'Authenticator verification failed.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -90,6 +103,26 @@ export default function Login() {
 
             {error && <View style={styles.error} testID="login-error"><Text style={styles.errorText}>{error}</Text></View>}
 
+            {mfaRequired ? (
+              <>
+                <Text style={styles.label}>AUTHENTICATOR CODE</Text>
+                <TextInput
+                  testID="login-mfa-input"
+                  style={styles.input}
+                  value={mfaCode}
+                  onChangeText={(value) => setMfaCode(value.replace(/\D/g, '').slice(0, 6))}
+                  keyboardType="number-pad"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  placeholder="000000"
+                  placeholderTextColor={C.textMuted}
+                  accessibilityLabel="Authenticator code"
+                />
+                <Pressable testID="login-mfa-submit" style={({ pressed }) => [styles.primary, pressed && styles.pressed]} onPress={submitMfa} disabled={busy}>
+                  {busy ? <ActivityIndicator color={C.bg} /> : <><Text style={styles.primaryText}>Verify securely</Text><ShieldCheck size={20} color={C.bg} /></>}
+                </Pressable>
+              </>
+            ) : <>
             <Text style={styles.label}>EMAIL</Text>
             <TextInput
               testID="login-email-input"
@@ -120,6 +153,7 @@ export default function Login() {
             <Pressable testID="login-submit-button" style={({ pressed }) => [styles.primary, pressed && styles.pressed]} onPress={submit} disabled={busy}>
               {busy ? <ActivityIndicator color={C.bg} /> : <><Text style={styles.primaryText}>Sign in</Text><ArrowRight size={20} color={C.bg} /></>}
             </Pressable>
+            </>}
 
             {SHOW_DEMO_ACCOUNTS ? (
               <>
@@ -166,6 +200,8 @@ export default function Login() {
             <Text style={styles.legal}>Private access is provided after VIP consultation and service approval.</Text>
             <View style={styles.legalLinks}>
               <Pressable onPress={() => router.push('/privacy')} accessibilityRole="link"><Text style={styles.legalLink}>PRIVACY</Text></Pressable>
+              <Text style={styles.legalDot}>•</Text>
+              <Pressable onPress={() => router.push('/terms' as any)} accessibilityRole="link"><Text style={styles.legalLink}>TERMS</Text></Pressable>
               <Text style={styles.legalDot}>•</Text>
               <Pressable onPress={() => router.push('/delete-account')} accessibilityRole="link"><Text style={styles.legalLink}>DELETE ACCOUNT</Text></Pressable>
             </View>

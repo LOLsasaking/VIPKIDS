@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 export const VIPKIDS_PUSH_CHANNEL_ID = 'vipkids-safety';
+export const PUSH_REGISTRATION_KEY = 'vipkids_push_registration';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -30,7 +31,8 @@ export async function registerForPushNotificationsAsync(): Promise<{ token: stri
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#D4AF37',
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      // Hide child/route details until the device is unlocked.
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
       bypassDnd: false,
       sound: 'default',
     });

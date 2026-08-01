@@ -19,7 +19,8 @@
       "autoIncrement": true,
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS": "false"
+        "EXPO_PUBLIC_SHOW_DEMO_ACCOUNTS": "false",
+        "EXPO_PUBLIC_BACKEND_MODE": "supabase"
       }
     }
   },

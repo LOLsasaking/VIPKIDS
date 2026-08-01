@@ -1,4 +1,11 @@
 # Configure these in EAS as preview/production environment variables.
 EXPO_PUBLIC_BACKEND_URL=https://api.example.com
 EXPO_PUBLIC_ROUTING_BASE_URL=https://routing.example.com
+EXPO_PUBLIC_ROUTING_ENDPOINT=https://your-project.supabase.co/functions/v1/routing
+EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your-public-anon-key
+EXPO_PUBLIC_BACKEND_MODE=supabase
 EXPO_PUBLIC_PRIVACY_CONTACT=privacy@example.com
+# EAS secret consumed only while generating the Android binary. Restrict this
+# key in Google Cloud to Maps SDK for Android + this package/signing SHA-1.
+GOOGLE_MAPS_ANDROID_API_KEY=your-restricted-android-maps-key

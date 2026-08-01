@@ -8,7 +8,11 @@ create extension if not exists pgcrypto;
 create type public.user_role as enum ('admin', 'parent', 'driver', 'child');
 create type public.account_status as enum ('pending', 'approved', 'active', 'suspended');
 create type public.route_phase as enum ('morning', 'afternoon');
-create type public.attendance_status as enum ('on_the_way', 'picked_up', 'absent', 'arrived_school', 'leaving_school', 'arrived_home');
+create type public.attendance_status as enum (
+  'on_the_way', 'approaching', 'picked_up', 'absent', 'no_show',
+  'arrived_school', 'leaving_school', 'arriving_home', 'arrived_home',
+  'delay', 'alt_dropoff'
+);
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -23,7 +27,7 @@ create table public.profiles (
   license_expiry date,
   permit_expiry date,
   guardian_consent_confirmed_at timestamptz,
-  guardian_consent_confirmed_by uuid references public.profiles(id),
+  guardian_consent_confirmed_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -200,8 +204,9 @@ create policy "vehicles: assigned parties or admin" on public.vehicles for selec
 create policy "children: assigned parties or admin" on public.children for select using (
   public.is_admin() or parent_id = auth.uid() or assigned_driver_id = auth.uid()
 );
-create policy "children: parent creates own request" on public.children for insert with check (parent_id = auth.uid() and exists(select 1 from public.profiles where id = auth.uid() and role = 'parent'));
-create policy "children: parent updates own record" on public.children for update using (parent_id = auth.uid()) with check (parent_id = auth.uid());
+-- Family records and assignments are changed only through the authenticated
+-- Edge API. This prevents a parent client from assigning a driver/vehicle or
+-- changing protected child fields directly with the public anon key.
 create policy "routes: assigned driver or admin" on public.routes for select using (public.is_admin() or driver_id = auth.uid());
 create policy "route children: related party or admin" on public.route_children for select using (
   public.is_admin() or public.is_parent_of(child_id) or public.is_driver_of(child_id)
@@ -219,7 +224,8 @@ create policy "route points: active assigned audience" on public.route_points fo
 );
 create policy "attendance: assigned parties" on public.attendance_events for select using (public.is_admin() or public.is_parent_of(child_id) or public.is_driver_of(child_id) or public.is_child_account_for(child_id));
 create policy "emergency: driver/admin" on public.emergency_events for select using (public.is_admin() or driver_id = auth.uid());
-create policy "push tokens: owner only" on public.push_tokens for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+-- Push-token writes are Edge-only so token format, platform, and cross-account
+-- device reassignment are always validated before delivery.
 
 -- Child accounts never query the raw child, parent, or route tables. This view
 -- exposes only their assigned ride, vehicle, driver contact, and fresh vehicle

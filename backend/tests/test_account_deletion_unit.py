@@ -32,6 +32,7 @@ class FakeDB:
     def __init__(self, children=None):
         self.messages = FakeCollection()
         self.notifications = FakeCollection()
+        self.push_tokens = FakeCollection()
         self.children = FakeCollection(children)
         self.events = FakeCollection()
         self.activity_events = FakeCollection()

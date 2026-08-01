@@ -18,6 +18,7 @@ import {
 import { AuthProvider } from '@/src/auth';
 import '@/src/backgroundLocation';
 import { C } from '@/src/theme';
+import NotificationNavigation from '@/src/components/NotificationNavigation';
 
 export default function RootLayout() {
   const [loaded] = usePlayfair({
@@ -39,12 +40,14 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
+        <NotificationNavigation />
         <StatusBar style="light" />
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: C.bg } }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="login" />
           <Stack.Screen name="register" />
           <Stack.Screen name="privacy" />
+          <Stack.Screen name="terms" />
           <Stack.Screen name="delete-account" />
           <Stack.Screen name="(parent)" />
           <Stack.Screen name="(driver)" />

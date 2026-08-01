@@ -24,3 +24,5 @@ services:
         sync: false                   # 12+ chars
       - key: ALLOWED_ORIGINS
         value: https://vipkids-web.example   # native app ignores CORS; any https value satisfies prod checks
+      - key: ALLOWED_HOSTS
+        sync: false                   # e.g. vipkids-backend.onrender.com or your custom API hostname

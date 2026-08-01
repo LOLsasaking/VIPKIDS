@@ -4,10 +4,12 @@
  */
 import { storage } from '@/src/utils/storage';
 import { demoApiResponse, demoModeEnabled, isDemoToken } from './demo';
+import { supabase, supabaseConfigured, usesSupabase } from './supabase';
 
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
 const ALLOW_INSECURE_HTTP = process.env.EXPO_PUBLIC_ALLOW_INSECURE_HTTP === 'true';
-const API = `${BASE}/api`;
+const SUPABASE_FUNCTIONS_BASE = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+const API = supabaseConfigured ? `${SUPABASE_FUNCTIONS_BASE}/functions/v1/api` : `${BASE}/api`;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 export const TOKEN_KEY = 'vipkids_token';
@@ -23,14 +25,18 @@ export async function api<T = any>(path: string, opts: ApiOptions = {}): Promise
   if (opts.auth !== false && demoModeEnabled() && isDemoToken(token)) {
     return demoApiResponse(path, opts, token) as T;
   }
-  if (!BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
-  if (!__DEV__ && !ALLOW_INSECURE_HTTP && !BASE.startsWith('https://')) {
+  if (usesSupabase && !supabaseConfigured) throw new Error('This build is missing its Supabase production configuration.');
+  if (!supabaseConfigured && !BASE) throw new Error('VIP Kids is not connected to its secure service. Please contact support.');
+  if (!supabaseConfigured && !__DEV__ && !ALLOW_INSECURE_HTTP && !BASE.startsWith('https://')) {
     throw new Error('VIP Kids requires a secure HTTPS connection in production.');
   }
   const { method = 'GET', body, auth = true } = opts;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (auth) {
-    if (token) headers.Authorization = `Bearer ${token}`;
+    const supabaseSession = supabaseConfigured && supabase ? await supabase.auth.getSession() : null;
+    const supabaseToken = supabaseSession?.data.session?.access_token || '';
+    const accessToken = supabaseToken || token;
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);

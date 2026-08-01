@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Bell, Car, ChevronRight, Clock, MapPin, Navigation, Phone, Plus, ShieldCheck, X } from 'lucide-react-native';
+import { Bell, Car, CheckSquare2, ChevronRight, Clock, MapPin, Navigation, Phone, Plus, ShieldCheck, Square, X } from 'lucide-react-native';
 import { Api } from '@/src/api';
 import BrandLogo from '@/src/components/BrandLogo';
 import { C, Fonts, S, T } from '@/src/theme';
@@ -215,6 +215,7 @@ function AddChildModal({ visible, onClose, onCreated }: { visible: boolean; onCl
   const [emergencyPhone, setEmergencyPhone] = useState('');
   const [childEmail, setChildEmail] = useState('');
   const [childPassword, setChildPassword] = useState('');
+  const [guardianConsent, setGuardianConsent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const reset = () => {
@@ -229,6 +230,7 @@ function AddChildModal({ visible, onClose, onCreated }: { visible: boolean; onCl
     setEmergencyPhone('');
     setChildEmail('');
     setChildPassword('');
+    setGuardianConsent(false);
   };
 
   const submit = async () => {
@@ -236,8 +238,11 @@ function AddChildModal({ visible, onClose, onCreated }: { visible: boolean; onCl
     if (!name.trim() || !school.trim() || !homeAddress.trim() || !schoolAddress.trim()) {
       return Alert.alert('Missing child details', 'Enter the child name, school, home pickup address, and school address.');
     }
-    if (!normalizedEmail || childPassword.length < 8) {
-      return Alert.alert('Child login needed', 'Enter the child email and a password with at least 8 characters.');
+    if (!normalizedEmail || childPassword.length < 12) {
+      return Alert.alert('Child login needed', 'Enter the child email and a password with at least 12 characters.');
+    }
+    if (!guardianConsent) {
+      return Alert.alert('Authorization required', 'Confirm that you are the parent or authorized guardian before creating this child login.');
     }
     setBusy(true);
     try {
@@ -253,6 +258,7 @@ function AddChildModal({ visible, onClose, onCreated }: { visible: boolean; onCl
         emergency_contact_phone: emergencyPhone.trim() || undefined,
         child_email: normalizedEmail,
         child_password: childPassword,
+        guardian_consent_confirmed: true,
         round_trip: true,
       });
       reset();
@@ -293,8 +299,18 @@ function AddChildModal({ visible, onClose, onCreated }: { visible: boolean; onCl
             <Text style={styles.loginBoxTitle}>Child sign-in</Text>
             <Text style={styles.loginBoxCopy}>This is the email and password your child will use to track only their own assigned driver.</Text>
             <ModalField label="CHILD EMAIL" value={childEmail} onChangeText={setChildEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" />
-            <ModalField label="CHILD PASSWORD" value={childPassword} onChangeText={setChildPassword} secureTextEntry autoComplete="new-password" placeholder="At least 8 characters" />
+            <ModalField label="CHILD PASSWORD" value={childPassword} onChangeText={setChildPassword} secureTextEntry autoComplete="new-password" placeholder="At least 12 characters" />
           </View>
+          <Pressable
+            style={[styles.guardianConsent, guardianConsent && styles.guardianConsentActive]}
+            onPress={() => setGuardianConsent((value) => !value)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: guardianConsent }}
+            testID="parent-child-guardian-consent"
+          >
+            {guardianConsent ? <CheckSquare2 size={22} color={C.gold} /> : <Square size={22} color={C.textMuted} />}
+            <Text style={styles.guardianConsentText}>I am this child’s parent or authorized guardian and authorize this restricted child login and transportation data use.</Text>
+          </Pressable>
           <Pressable style={[styles.modalPrimary, busy && { opacity: 0.7 }]} onPress={submit} disabled={busy} testID="parent-add-child-submit">
             {busy ? <ActivityIndicator color={C.bg} /> : <Text style={styles.modalPrimaryText}>CREATE CHILD LOGIN</Text>}
           </Pressable>
@@ -387,6 +403,9 @@ const styles = StyleSheet.create({
   loginBox: { gap: 11, borderWidth: 1, borderColor: C.goldMuted, backgroundColor: 'rgba(212,175,55,.08)', padding: 13, borderRadius: 12, marginTop: 4 },
   loginBoxTitle: { color: C.text, fontFamily: Fonts.bodySemiBold, fontSize: 15 },
   loginBoxCopy: { ...T.bodySm, fontSize: 11 },
+  guardianConsent: { minHeight: 58, flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.bgSecondary, borderRadius: 10, padding: 12 },
+  guardianConsentActive: { borderColor: C.gold, backgroundColor: 'rgba(212,175,55,.08)' },
+  guardianConsentText: { flex: 1, color: C.textSecondary, fontFamily: Fonts.body, fontSize: 11, lineHeight: 16 },
   modalPrimary: { minHeight: 54, borderRadius: 10, backgroundColor: C.gold, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   modalPrimaryText: { color: C.bg, fontFamily: Fonts.bodySemiBold, fontSize: 12, letterSpacing: 1.1 },
 });
